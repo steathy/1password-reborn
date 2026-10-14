@@ -211,7 +211,7 @@ try {
 // Additive and guarded: if any passkey file fails to load, fill/save keep working.
 // Order matters: tldts (global), the pure core, the pure state machine, then the wiring.
 try {
-  importScripts('ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js', 'passkeys/sw-passkeys.js');
+  importScripts('ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js', 'passkeys/fill-script.js', 'passkeys/sw-passkeys.js');
   console.info('[1P-MV3] passkeys loaded');
 } catch (e) {
   console.error('[1P-MV3] passkeys failed to load', e);

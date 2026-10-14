@@ -298,7 +298,7 @@
 
     function getState() {
       return {
-        owner: owner ? { id: owner.id, stage: owner.stage, tabId: owner.tabId } : null,
+        owner: owner ? { id: owner.id, stage: owner.stage, tabId: owner.tabId, origin: owner.origin } : null,
         pending: Array.from(pending.values()).map((r) => ({ id: r.id, kind: r.kind, stage: r.stage, tabId: r.tabId })),
       };
     }

@@ -284,6 +284,7 @@ test('get: index match opens the popup directly; miss and partial index ask firs
   assert.equal(p.state(), 'waiting');
   assert.deepEqual(h.calls.showPopup, [PAGE]);
   assert.equal(h.m.getState().owner.id, 'g1');
+  assert.equal(h.m.getState().owner.origin, ORIGIN);
   p.emit({ type: 'decline', id: 'g1', how: 'fallback' });                // "Use another way" while waiting
   assert.equal(p.last('reply').fallback, true);
   assert.equal(h.m.getState().owner, null);

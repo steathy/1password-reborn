@@ -11,7 +11,9 @@
   const OP = self.OnePassword;
   const Agent = self.Agent;
   const AH = self.AgentHandlers;
-  if (!A || !RM || !OP || !Agent || !AH || typeof AH.fillItem !== 'function' ||
+  const FS = self.OP4FillScript;
+  if (!A || !RM || !OP || !Agent || !AH || !FS || typeof AH.fillItem !== 'function' ||
+      typeof AH.executeFillScript !== 'function' || typeof Agent.Fa !== 'function' ||
       typeof OP.showPopup !== 'function' || typeof OP.autosave !== 'function' ||
       typeof Agent.isConnected !== 'function') {
     console.warn(TAG, 'inactive: engine hooks missing');
@@ -101,6 +103,11 @@
     // (4.6.1) shows its save dialog only when the login has a password-designated field; a passkey login has none.
     OP.autosave({ login, collectedDocument, context: 'manual-save', location: url }, null, { url });
   }
+  // The cached tab is meaningful only for the focused window. While a focus change's tab
+  // query is pending the cache still names the previous window's tab, which reads as
+  // "unknown" so nothing is promoted from it; a window regaining focus from the app popup
+  // keeps its (unchanged) tab, so the owner's fill check is unaffected.
+  function getActive() { return active && active.windowId === focusedWindowId ? active : null; }
   const manager = RM.createManager({
     authenticator: A,
     index,
@@ -110,11 +117,7 @@
     // The engine's own connection state. OP.toolbarButtonEnabled is NOT it: the engine sets
     // that flag to true unconditionally at startup, connected or not.
     isConnected: () => Agent.isConnected() === true,
-    // The cached tab is meaningful only for the focused window. While a focus change's tab
-    // query is pending the cache still names the previous window's tab, which reads as
-    // "unknown" so nothing is promoted from it; a window regaining focus from the app popup
-    // keeps its (unchanged) tab, so the owner's fill check is unaffected.
-    getActive: () => (active && active.windowId === focusedWindowId ? active : null),
+    getActive,
     log: (level, ...args) => (level === 'error' ? console.error : console.warn)(TAG, ...args),
   });
 
@@ -145,14 +148,50 @@
     });
   });
 
-  // Every item the app sends for filling passes through here. The passkey field is
-  // stripped before the engine's own handler runs, whether or not we consume the reply.
+  // Some app versions send the item itself (fillItem); 1Password 4.6.1 for Windows fills through
+  // collectDocuments/executeFillScript instead (hooks below). The passkey field is stripped
+  // before the engine's own handler runs, whether or not we consume the reply.
   const origFillItem = AH.fillItem;
   AH.fillItem = function (payload) {
     let consumed = false;
     try { consumed = manager.handleFillItem(payload); }
     catch (e) { console.error(TAG, 'fillItem hook failed', e); }
     if (!consumed) return origFillItem.call(this, payload);
+  };
+
+  /* ---------- 1Password 4.6.1 fill path: collectDocuments → executeFillScript ---------- */
+  const originOf = (u) => { try { return new URL(u).origin; } catch (e) { return null; } };
+  // Collect hook: while a get request waits, add a synthetic field to the owner's page so the
+  // app's fill script carries the passkey (the raw item never reaches the extension).
+  const origFa = Agent.Fa;
+  Agent.Fa = function (c) {
+    try {
+      const owner = manager.getState().owner;
+      const a = getActive();
+      if (owner && owner.stage === 'waiting' && a && a.tabId === owner.tabId) {
+        FS.addPasskeyField(c, (doc) => originOf(doc.url) === owner.origin);
+      }
+    } catch (e) { console.error(TAG, 'collect hook failed', e); }
+    return origFa.apply(this, arguments);
+  };
+  // Fill hook: strip passkey ops from EVERY fill script so a passkey is never typed into a page;
+  // hand a found value to the manager, and fail closed (empty scripts) if anything throws.
+  const origExecuteFillScript = AH.executeFillScript;
+  AH.executeFillScript = function (payload) {
+    try {
+      const found = FS.takePasskeys(payload);
+      let consumed = false;
+      if (found.values.length) {
+        consumed = manager.handleFillItem({ item: { secureContents: { fields: [{ name: 'passkey', type: 'P', value: found.values[0] }] } } });
+      } else if (found.hadOps) {
+        manager.handleFillItem({ item: { secureContents: { fields: [] } } });   // shows the no-passkey notice while waiting
+      }
+      if (consumed) FS.emptyScripts(payload);      // nothing is typed; the original still reports fillItemResults
+    } catch (e) {
+      FS.emptyScripts(payload);
+      console.error(TAG, 'fill script hook failed', e);
+    }
+    return origExecuteFillScript.apply(this, arguments);
   };
 
   /* ---------- tab and window events ---------- */
