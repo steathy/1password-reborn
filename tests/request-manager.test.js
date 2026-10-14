@@ -87,6 +87,9 @@ test('create: prompt, Save, autosave payload, Done, credential; never a popup ow
   assert.equal((await A.decodePasskeyField(login.secureContents.fields[1].value)).rpId, 'example.com');
   assert.deepEqual(Object.keys(doc).sort(), ['collectedTimestamp', 'displayTitle', 'documentUUID', 'fields', 'forms', 'url']);
   assert.equal(doc.displayTitle, 'GitHub Passkey - Alice');
+  assert.deepEqual(doc.fields.map((f) => [f.opid, f.elementNumber, f.htmlID, f.htmlName, f.type, f['label-tag'], f.visible, f.viewable]), [['__0', 0, 'username', 'username', 'text', 'username', true, true], ['__1', 1, 'passkey', 'passkey', 'password', 'passkey', true, true]]);
+  assert.equal(doc.fields[0].value, 'alice@example.com');
+  assert.equal(doc.fields[1].value, login.secureContents.fields[1].value);
   assert.equal(h.calls.recoveryPut.length, 1);
   assert.equal(h.calls.recoveryPut[0][1].login, login);
   assert.equal(p.state(), 'create-saving');

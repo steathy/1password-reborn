@@ -160,6 +160,7 @@
     }
     function buildSavePayload(rec, made) {
       const p = made.passkey;
+      const passkeyJson = A.encodePasskeyField(p);
       return {
         credentialId: p.credentialId, title: rec.title, url: rec.url, createdAt: now(),
         login: {
@@ -168,11 +169,14 @@
           secureContents: {
             fields: [
               { name: 'username', value: p.userName, type: 'T', designation: 'username' },
-              { name: 'passkey', value: A.encodePasskeyField(p), type: 'P' },
+              { name: 'passkey', value: passkeyJson, type: 'P' },
             ],
           },
         },
-        collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, forms: {}, fields: [], collectedTimestamp: now() },
+        collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, forms: {}, fields: [
+          { opid: '__0', elementNumber: 0, visible: true, viewable: true, htmlID: 'username', htmlName: 'username', type: 'text', value: p.userName, 'label-tag': 'username' },
+          { opid: '__1', elementNumber: 1, visible: true, viewable: true, htmlID: 'passkey', htmlName: 'passkey', type: 'password', value: passkeyJson, 'label-tag': 'passkey' },
+        ], collectedTimestamp: now() },
       };
     }
     function createDone(rec) {
