@@ -112,3 +112,22 @@ test('re-rendering re-arms the delay', () => {
   button(t.card, 'Sign in').click();
   assert.equal(t.calls.approve.length, 1);
 });
+
+test('card renders as a full-viewport modal with a centered box', () => {
+  const t = setup({ isTrusted: () => true });
+  t.card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: 'GitHub Passkey - Alice' });
+  t.advance(500);                                                              // armed and trusted: only the backdrop is the reason for no call
+  const css = t.card._root.querySelector('style').textContent;
+  assert.ok(css.includes('position:fixed'));
+  assert.ok(css.includes('inset:0'));
+  assert.ok(css.includes('z-index:2147483647'));
+  assert.ok(/:host\{[^}]*background:rgba\(/.test(css));
+  assert.ok(css.includes('align-items:center'));
+  assert.ok(css.includes('justify-content:center'));
+  assert.ok(!css.includes('right:16px'));
+  assert.ok(!css.includes('bottom:16px'));
+  t.card.host.dispatchEvent(new t.dom.window.MouseEvent('click', { bubbles: true, composed: true }));
+  assert.deepEqual(t.calls.approve, []);
+  assert.deepEqual(t.calls.decline, []);
+  assert.equal(t.card.state, 'create-prompt');
+});
