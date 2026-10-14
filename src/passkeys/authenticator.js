@@ -136,5 +136,104 @@
   const AAGUID = bytesFromUuid('ca2c32a9-7406-4702-a0b7-635a907145bd');
   const FLAGS = Object.freeze({ UP: 0x01, UV: 0x04, BE: 0x08, BS: 0x10, AT: 0x40 });
 
-  return { fail, b64url, concat, sha256, cbor, derFromRaw, validateRpId, uuidFromBytes, bytesFromUuid, AAGUID, FLAGS };
+  /* ---------- WebAuthn building blocks ---------- */
+  function clientDataJSON(type, challengeB64url, origin) {
+    return enc.encode(JSON.stringify({ type, challenge: challengeB64url, origin, crossOrigin: false }));
+  }
+  function normB64(s) { return b64url.encode(b64url.decode(s)); }          // canonical, unpadded
+  function coseKey(jwk) {
+    // CTAP2 canonical key order: 1, 3, -1, -2, -3
+    const m = new Map();
+    m.set(1, 2);                       // kty: EC2
+    m.set(3, -7);                      // alg: ES256
+    m.set(-1, 1);                      // crv: P-256
+    m.set(-2, b64url.decode(jwk.x));
+    m.set(-3, b64url.decode(jwk.y));
+    return cbor.encode(m);
+  }
+  function authData(rpIdHash, flags, attested) {
+    const head = concat(rpIdHash, Uint8Array.of(flags), new Uint8Array(4)); // counter always 0
+    if (!attested) return head;
+    const len = Uint8Array.of(attested.credId.length >> 8, attested.credId.length & 0xff);
+    return concat(head, AAGUID, len, attested.credId, attested.cose);
+  }
+  function hostOf(origin) {
+    try { return new URL(origin).hostname; } catch (e) { throw fail('SecurityError', 'invalid origin'); }
+  }
+
+  async function makeCredential(options, origin, opts) {
+    const uv = Boolean(opts && opts.uv);
+    const host = hostOf(origin);
+    const rpId = (options.rp && options.rp.id) || host;
+    if (!validateRpId(rpId, host)) throw fail('SecurityError', 'rpId is not valid for this origin');
+    if (!options.user || typeof options.user.id !== 'string') throw fail('TypeError', 'user.id is required');
+    const userId = b64url.decode(options.user.id);
+    if (userId.length < 1 || userId.length > 64) throw fail('TypeError', 'user.id must be 1 to 64 bytes');
+    const params = Array.isArray(options.pubKeyCredParams) ? options.pubKeyCredParams : [];
+    if (params.length && !params.some((p) => p && p.alg === -7)) throw fail('NotSupportedError', 'site does not accept ES256');
+
+    const key = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const jwk = await subtle.exportKey('jwk', key.publicKey);
+    const pkcs8 = new Uint8Array(await subtle.exportKey('pkcs8', key.privateKey));
+    const spki = new Uint8Array(await subtle.exportKey('spki', key.publicKey));
+    const credId = webcrypto.getRandomValues(new Uint8Array(16));
+
+    const cdj = clientDataJSON('webauthn.create', normB64(options.challenge), origin);
+    const flags = FLAGS.UP | FLAGS.BE | FLAGS.BS | FLAGS.AT | (uv ? FLAGS.UV : 0);
+    const ad = authData(await sha256(enc.encode(rpId)), flags, { credId, cose: coseKey(jwk) });
+    const attestationObject = cbor.encode({ fmt: 'none', attStmt: {}, authData: ad }); // canonical: fmt, attStmt, authData
+
+    const passkey = {
+      v: 1,
+      credentialId: uuidFromBytes(credId),
+      rpId,
+      rpName: (options.rp && options.rp.name) || rpId,
+      userHandle: b64url.encode(userId),
+      userName: options.user.name || '',
+      userDisplayName: options.user.displayName || '',
+      keyType: 'public-key',
+      keyAlgorithm: 'ECDSA',
+      keyCurve: 'P-256',
+      keyValue: b64url.encode(pkcs8),
+      publicKey: b64url.encode(spki),
+      counter: '0',
+      discoverable: 'true',
+      creationDate: new Date().toISOString(),
+    };
+    return {
+      credentialId: passkey.credentialId,
+      passkey,
+      response: { clientDataJSON: cdj, attestationObject, authenticatorData: ad, publicKey: spki, publicKeyAlgorithm: -7 },
+    };
+  }
+
+  async function getAssertion(options, origin, passkey, opts) {
+    const uv = Boolean(opts && opts.uv);
+    const host = hostOf(origin);
+    const rpId = options.rpId || host;
+    if (!validateRpId(rpId, host)) throw fail('SecurityError', 'rpId is not valid for this origin');
+    if (rpId !== passkey.rpId) throw fail('NotAllowedError', 'passkey belongs to another site');
+    const myId = b64url.encode(bytesFromUuid(passkey.credentialId));
+    const allow = Array.isArray(options.allowCredentials) ? options.allowCredentials : [];
+    if (allow.length && !allow.some((c) => c && typeof c.id === 'string' && normB64(c.id) === myId)) {
+      throw fail('NotAllowedError', 'passkey is not in allowCredentials');
+    }
+    const priv = await subtle.importKey('pkcs8', b64url.decode(passkey.keyValue), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+    const cdj = clientDataJSON('webauthn.get', normB64(options.challenge), origin);
+    const flags = FLAGS.UP | FLAGS.BE | FLAGS.BS | (uv ? FLAGS.UV : 0);
+    const ad = authData(await sha256(enc.encode(rpId)), flags, null);
+    const toSign = concat(ad, await sha256(cdj));   // WebCrypto hashes this itself; never pre-hash
+    const raw = new Uint8Array(await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, priv, toSign));
+    return {
+      credentialId: passkey.credentialId,
+      response: {
+        clientDataJSON: cdj,
+        authenticatorData: ad,
+        signature: derFromRaw(raw),
+        userHandle: passkey.userHandle ? b64url.decode(passkey.userHandle) : null,
+      },
+    };
+  }
+
+  return { fail, b64url, concat, sha256, cbor, derFromRaw, validateRpId, uuidFromBytes, bytesFromUuid, AAGUID, FLAGS, makeCredential, getAssertion };
 });
