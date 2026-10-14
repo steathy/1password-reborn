@@ -7,10 +7,15 @@
  *   node tools/1pif-to-bitwarden.js <export.1pif> <out.json>
  *   then Bitwarden → Tools → Import data → "Bitwarden (json)"
  *
- * Only items carrying a `passkey` web-form field are converted. Import the rest of
- * the vault with Bitwarden's own "1Password (1pif)" importer. CSV exports are not
- * supported: 1Password 4's CSV drops web-form fields. The 1PIF file is PLAIN TEXT;
- * delete both files after importing.
+ * Both export layouts are read: the classic 1PIF records, and the OPVault-style JSON
+ * that 1Password 4.6 for Windows writes. Only items carrying a `passkey` field are
+ * converted. CSV exports are not supported: 1Password 4's CSV drops web-form fields.
+ * The 1PIF file is PLAIN TEXT; delete both files after importing.
+ *
+ * WARNING: before importing the rest of the vault with Bitwarden's own "1Password
+ * (1pif)" importer, delete or exclude the passkey items from that export. The app
+ * stores the passkey as the item's password, so that importer would copy the
+ * private-key JSON into a visible Bitwarden password.
  */
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -27,7 +32,9 @@ function parse1pif(text) {
     .filter((x) => x && typeof x === 'object');
 }
 function fieldsOf(item) {
-  return item.secureContents && Array.isArray(item.secureContents.fields) ? item.secureContents.fields : [];
+  if (item.secureContents && Array.isArray(item.secureContents.fields)) return item.secureContents.fields;
+  if (item.details && Array.isArray(item.details.fields)) return item.details.fields;
+  return [];
 }
 function passkeyOf(item) {
   const f = fieldsOf(item).find((x) => x && x.name === 'passkey' && typeof x.value === 'string');
@@ -40,6 +47,13 @@ function passkeyOf(item) {
 function usernameOf(item) {
   const f = fieldsOf(item).find((x) => x && x.designation === 'username');
   return f && typeof f.value === 'string' ? f.value : null;
+}
+function uriOf(item) {
+  const o = item.overview;
+  if (!o || typeof o !== 'object') return null;
+  if (typeof o.url === 'string' && o.url) return o.url;
+  const first = Array.isArray(o.URLs) && o.URLs[0];
+  return first && typeof first.u === 'string' && first.u ? first.u : null;
 }
 function convert(text) {
   const items = [];
@@ -54,11 +68,11 @@ function convert(text) {
       folderId: null,
       type: 1,
       reprompt: 0,
-      name: item.title || p.rpName || p.rpId,
+      name: item.title || (item.overview && item.overview.title) || p.rpName || p.rpId,
       notes: null,
       favorite: false,
       login: {
-        uris: [{ match: null, uri: item.location || ('https://' + p.rpId) }],
+        uris: [{ match: null, uri: item.location || uriOf(item) || ('https://' + p.rpId) }],
         username: usernameOf(item) || p.userName || null,
         password: null,
         totp: null,

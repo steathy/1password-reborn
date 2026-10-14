@@ -59,3 +59,26 @@ test('convert keeps only passkey items and emits Bitwarden fido2Credentials', as
   const usage = spawnSync(process.execPath, [TOOL], { encoding: 'utf8' });
   assert.equal(usage.status, 2);
 });
+
+test('convert reads the OPVault-style export written by 1Password 4.6 for Windows', async () => {
+  const made = await A.makeCredential({
+    rp: { id: 'webauthn.io', name: 'webauthn.io' },
+    user: { id: A.b64url.encode(Uint8Array.from([7, 8])), name: 'sky4', displayName: 'sky4' },
+    challenge: A.b64url.encode(new Uint8Array(32)), pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+  }, 'https://webauthn.io');
+  const opItem = { category: '001', created: 1700000000, updated: 1700000000, tx: 1700000000, uuid: 'C3',
+    overview: { title: 'webauthn.io Passkey - sky4', URLs: [{ u: 'https://webauthn.io/' }], url: 'https://webauthn.io/', ps: 100 },
+    details: { htmlForm: { htmlMethod: 'get' }, fields: [
+      { designation: 'username', id: 'username;opid=__0', type: 'T', name: 'username', value: 'sky4' },
+      { designation: 'password', id: 'passkey;opid=__1', type: 'P', name: 'passkey', value: A.encodePasskeyField(made.passkey) } ] } };
+  const out = convert(JSON.stringify(opItem));
+  assert.equal(out.items.length, 1);
+  const it = out.items[0];
+  assert.equal(it.name, 'webauthn.io Passkey - sky4');
+  assert.deepEqual(it.login.uris, [{ match: null, uri: 'https://webauthn.io/' }]);
+  assert.equal(it.login.username, 'sky4');
+  assert.equal(it.login.password, null);
+  assert.equal(it.login.fido2Credentials[0].keyValue, made.passkey.keyValue);
+  assert.equal(it.login.fido2Credentials[0].rpId, 'webauthn.io');
+  assert.equal(JSON.stringify(out).includes(made.passkey.publicKey), false);
+});
