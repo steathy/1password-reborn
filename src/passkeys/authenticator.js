@@ -104,5 +104,37 @@
     return concat(Uint8Array.of(0x30, r.length + s.length), r, s);
   }
 
-  return { fail, b64url, concat, sha256, cbor, derFromRaw };
+  /* ---------- rpId validation (spec: Security notes) ---------- */
+  function tld() {
+    if (root.tldts) return root.tldts;
+    if (typeof require === 'function') return require('../ext/tldts.min.js');
+    throw new Error('tldts is not loaded');
+  }
+  function validateRpId(rpId, host) {
+    if (typeof rpId !== 'string' || typeof host !== 'string') return false;
+    rpId = rpId.toLowerCase();
+    host = host.toLowerCase();
+    if (!rpId || !host) return false;
+    if (host === 'localhost') return rpId === 'localhost';
+    const parsed = tld().parse(host, { allowPrivateDomains: true });
+    if (parsed.isIp || !parsed.domain) return false;
+    const suffixOf = (whole, suffix) => whole === suffix || whole.endsWith('.' + suffix);
+    return suffixOf(host, rpId) && suffixOf(rpId, parsed.domain);
+  }
+
+  /* ---------- credential ids are 16 random bytes shown as a UUID (Bitwarden's native form) ---------- */
+  function uuidFromBytes(b) {
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  }
+  function bytesFromUuid(u) {
+    const h = String(u).replace(/-/g, '');
+    if (!/^[0-9a-f]{32}$/i.test(h)) throw fail('passkey-corrupt', 'credentialId is not a UUID');
+    return Uint8Array.from(h.match(/../g), (x) => parseInt(x, 16));
+  }
+
+  const AAGUID = bytesFromUuid('ca2c32a9-7406-4702-a0b7-635a907145bd');
+  const FLAGS = Object.freeze({ UP: 0x01, UV: 0x04, BE: 0x08, BS: 0x10, AT: 0x40 });
+
+  return { fail, b64url, concat, sha256, cbor, derFromRaw, validateRpId, uuidFromBytes, bytesFromUuid, AAGUID, FLAGS };
 });

@@ -55,3 +55,35 @@ test('fail builds an error with the given name', () => {
   assert.equal(e.name, 'SecurityError');
   assert.equal(e.message, 'nope');
 });
+
+test('validateRpId follows the spec table', () => {
+  const ok = (rp, host) => assert.equal(A.validateRpId(rp, host), true, `${rp} for ${host}`);
+  const no = (rp, host) => assert.equal(A.validateRpId(rp, host), false, `${rp} for ${host}`);
+  ok('example.com', 'login.example.com');
+  ok('login.example.com', 'login.example.com');
+  ok('example.com', 'example.com');
+  ok('localhost', 'localhost');
+  ok('example.co.uk', 'www.example.co.uk');
+  no('com', 'login.example.com');
+  no('co.uk', 'www.example.co.uk');
+  no('github.io', 'x.github.io');
+  ok('x.github.io', 'x.github.io');
+  no('other.com', 'login.example.com');
+  no('ample.com', 'example.com');            // not dot-delimited
+  no('example.com', '127.0.0.1');
+  no('127.0.0.1', '127.0.0.1');
+  no('example.com', 'localhost');
+  no('', 'example.com');
+  no('example.com', '');
+  no(undefined, 'example.com');
+});
+
+test('uuid helpers round-trip 16 bytes', () => {
+  const bytes = Uint8Array.from({ length: 16 }, (_, i) => i * 17);
+  const uuid = A.uuidFromBytes(bytes);
+  assert.match(uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.deepEqual(A.bytesFromUuid(uuid), bytes);
+  assert.throws(() => A.bytesFromUuid('not-a-uuid'));
+  assert.equal(A.uuidFromBytes(A.AAGUID), 'ca2c32a9-7406-4702-a0b7-635a907145bd');
+  assert.deepEqual(A.FLAGS, { UP: 1, UV: 4, BE: 8, BS: 16, AT: 64 });
+});
