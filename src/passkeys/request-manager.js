@@ -198,15 +198,103 @@
       };
     }
 
-    /* ---------- get (Task 7 replaces these stubs) ---------- */
-    function startGet(rec) { card(rec, 'get-prompt', { site: rec.rpId }); }
-    function getOpenPopup(rec) { owner = rec; rec.stage = 'waiting'; card(rec, 'waiting'); showPopup(rec.url); }
-    function getSign(rec) { failReq(rec, 'NotAllowedError', 'not implemented'); }
-    function promote() {}
-    function handleFillItem() { return false; }
-    function onTabActivated() {}
-    function onTabRemoved(tabId) { for (const rec of Array.from(pending.values())) if (rec.tabId === tabId) retire(rec); }
-    function onWindowFocusChanged() {}
+    /* ---------- get (spec: Data flow Get) ---------- */
+    function startGet(rec) {
+      rec.allow = (rec.options.allowCredentials || [])
+        .filter((c) => c && typeof c.id === 'string').map((c) => normId(c.id));
+      const match = index.get(rec.rpId).some((e) => !rec.allow.length || rec.allow.includes(idOfEntry(e)));
+      if (match) return getOpenPopup(rec);          // positive match: the popup is the prompt
+      card(rec, 'get-prompt', { site: rec.rpId }); // miss or partial index: ask first
+    }
+    function getOpenPopup(rec) {
+      if (owner && owner !== rec) { rec.stage = 'busy'; return card(rec, 'busy'); }
+      if (!isConnected()) { rec.stage = 'prompt'; return card(rec, 'not-connected'); }   // the app went away after intake
+      owner = rec;
+      rec.stage = 'waiting';
+      card(rec, 'waiting');
+      showPopup(rec.url);
+    }
+    function ownerIsActive() {
+      const a = getActive();
+      return Boolean(a && owner && a.tabId === owner.tabId && a.windowId === owner.windowId);
+    }
+    // Runs when the slot frees AND on every activation/focus event while it is free.
+    function promote() {
+      if (owner) return;
+      const a = getActive();
+      if (!a) return;
+      for (const rec of pending.values()) {
+        if (rec.kind === 'get' && rec.stage === 'busy' && rec.tabId === a.tabId && rec.windowId === a.windowId) return getOpenPopup(rec);
+      }
+    }
+    // Owner-only triggers: busy requests are never retired by these.
+    function onTabActivated(info) {
+      if (owner && owner.windowId === info.windowId && owner.tabId !== info.tabId) failReq(owner, 'NotAllowedError', 'tab changed while waiting for 1Password');
+      promote();
+    }
+    function onWindowFocusChanged(windowId) {
+      if (windowId === WINDOW_ID_NONE) return;       // the 1Password popup itself took focus
+      if (owner && owner.windowId !== windowId) failReq(owner, 'NotAllowedError', 'window changed while waiting for 1Password');
+      promote();
+    }
+    function onTabRemoved(tabId) {
+      for (const rec of Array.from(pending.values())) if (rec.tabId === tabId) retire(rec);
+    }
+
+    /* ---------- the app's reply: AgentHandlers.fillItem ---------- */
+    // Synchronous decision for the wrapper; the async part never changes it.
+    function handleFillItem(payload) {
+      const item = payload && payload.item;
+      const fields = item && item.secureContents && Array.isArray(item.secureContents.fields) ? item.secureContents.fields : null;
+      const idx = fields ? fields.findIndex((f) => f && f.name === 'passkey' && f.type === 'P') : -1;
+      if (idx < 0) {
+        if (owner && owner.stage === 'waiting') card(owner, 'notice', { text: 'That item has no passkey. Pick another.' });
+        return false;                                                   // the engine fills as usual
+      }
+      const field = fields.splice(idx, 1)[0];                             // ALWAYS strip before the engine sees the item
+      const live = owner && (owner.stage === 'waiting' || owner.stage === 'confirm') ? owner : null;
+      processPasskeyField(field.value, item.uuid, live).catch((e) => log('error', 'passkey field processing failed', e));
+      return Boolean(live);                                               // consumed only while a live owner exists
+    }
+    async function processPasskeyField(value, itemUuid, rec) {
+      let passkey = null;
+      try { passkey = await A.decodePasskeyField(value); }
+      catch (e) { log('warn', 'unreadable passkey field', e && e.message); }
+      if (passkey) {
+        index.add(passkey.rpId, { credentialId: passkey.credentialId, userName: passkey.userName, itemUuid, seenAt: now() });
+        recovery.remove(passkey.credentialId).catch((e) => log('warn', 'recovery remove failed', e));   // proven to be in the vault
+      }
+      if (!rec || owner !== rec || rec.stage !== 'waiting') return;       // no owner, retired, or already confirming
+      if (!passkey) return card(rec, 'notice', { text: 'That passkey could not be read.' });
+      const allowed = !rec.allow.length || rec.allow.includes(idOfEntry(passkey));
+      if (!ownerIsActive() || passkey.rpId !== rec.rpId || !allowed) {
+        return card(rec, 'notice', { text: 'That passkey is for another site or account.' });
+      }
+      rec.passkey = passkey;
+      rec.stage = 'confirm';                                              // signing waits for a trusted Sign in
+      card(rec, 'confirm', { site: rec.rpId, account: passkey.userName || passkey.userDisplayName || '' });
+    }
+    async function getSign(rec) {
+      let got;
+      try { got = await A.getAssertion(rec.options, rec.origin, rec.passkey, { uv: true }); }
+      catch (e) { return failReq(rec, e.name || 'NotAllowedError', e.message); }
+      if (!pending.has(rec.key) || owner !== rec) return;                 // retired meanwhile
+      reply(rec, { credential: assertionJson(got) });
+    }
+    function assertionJson(got) {
+      const id = A.b64url.encode(A.bytesFromUuid(got.credentialId));
+      const r = got.response;
+      return {
+        id, rawId: id, type: 'public-key', authenticatorAttachment: 'platform',
+        response: {
+          clientDataJSON: A.b64url.encode(r.clientDataJSON),
+          authenticatorData: A.b64url.encode(r.authenticatorData),
+          signature: A.b64url.encode(r.signature),
+          userHandle: r.userHandle ? A.b64url.encode(r.userHandle) : null,
+        },
+        clientExtensionResults: {},
+      };
+    }
 
     function getState() {
       return {

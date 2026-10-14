@@ -262,3 +262,224 @@ test('create: Save with the app connection gone shows not-connected instead of s
   assert.equal(p.last('reply').error.name, 'NotAllowedError');
   assert.equal(h.calls.recoveryRemove.length, 0);
 });
+
+async function vaultItem(options) {
+  const made = await A.makeCredential(options || createOptions(), ORIGIN, { uv: true });
+  const item = { uuid: 'item-1', secureContents: { fields: [
+    { name: 'username', value: 'alice@example.com', type: 'T', designation: 'username' },
+    { name: 'passkey', value: A.encodePasskeyField(made.passkey), type: 'P' },
+  ] } };
+  return { made, item, copy: () => JSON.parse(JSON.stringify(item)) };
+}
+const CRED = 'd0a4b7a6-5d1e-4a9f-9b1a-0a4c2a6f1e2b';
+const OTHER = '11111111-2222-4333-8444-555555555555';
+const indexWith = (credentialId) => ({ 'example.com': [{ credentialId, userName: 'alice', seenAt: 1 }] });
+
+test('get: index match opens the popup directly; miss and partial index ask first', async () => {
+  const h = harness({ index: indexWith(CRED) });
+  const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'waiting');
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
+  assert.equal(h.m.getState().owner.id, 'g1');
+  p.emit({ type: 'decline', id: 'g1', how: 'fallback' });                // "Use another way" while waiting
+  assert.equal(p.last('reply').fallback, true);
+  assert.equal(h.m.getState().owner, null);
+  p.emit({ type: 'request', id: 'g2', kind: 'get', options: getOptions({ allowCredentials: [{ type: 'public-key', id: idOf(OTHER) }] }) });
+  assert.equal(p.state(), 'get-prompt');                                  // entries exist but none intersect → ask
+  p.emit({ type: 'approve', id: 'g2', stage: 'prompt' });
+  assert.equal(p.state(), 'waiting');
+  assert.equal(h.calls.showPopup.length, 2);
+  p.emit({ type: 'decline', id: 'g2', how: 'cancel' });
+  assert.equal(p.last('reply').error.name, 'NotAllowedError');
+  const h2 = harness(); const p2 = makePort(2, { id: 1, windowId: 10 }); h2.m.onConnect(p2);
+  p2.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  assert.equal(p2.state(), 'get-prompt');                                 // empty index
+  p2.emit({ type: 'decline', id: 'g1', how: 'fallback' });
+  assert.equal(p2.last('reply').fallback, true);
+});
+
+test('fillItem: no owner → stripped normal fill + index refresh; owner → confirm → Sign in → assertion', async () => {
+  const v = await vaultItem();
+  const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  const loose = v.copy();
+  assert.equal(h.m.handleFillItem({ item: loose, action: 'fillLogin' }), false);
+  assert.deepEqual(loose.secureContents.fields.map((f) => f.name), ['username']);     // stripped before the engine fills
+  await until(() => (h.indexData['example.com'] || []).length === 1, 'index refresh');
+  assert.equal(h.indexData['example.com'][0].itemUuid, 'item-1');
+  assert.deepEqual(h.calls.recoveryRemove, [v.made.credentialId]);
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'waiting');                                      // the refresh made it an index hit
+  const noPasskey = { item: { uuid: 'x', secureContents: { fields: [{ name: 'username', value: 'a', type: 'T' }] } } };
+  assert.equal(h.m.handleFillItem(noPasskey), false);
+  assert.equal(p.last('card').card.text, 'That item has no passkey. Pick another.');
+  const live = v.copy();
+  assert.equal(h.m.handleFillItem({ item: live }), true);
+  assert.deepEqual(live.secureContents.fields.map((f) => f.name), ['username']);
+  await until(() => p.state() === 'confirm', 'confirm card');
+  assert.deepEqual(p.last('card').card, { state: 'confirm', site: 'example.com', account: 'alice@example.com' });
+  assert.equal(p.last('reply'), undefined);
+  assert.equal(h.m.handleFillItem({ item: v.copy() }), true);              // reply while confirming: consumed, no fill, card untouched
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(p.state(), 'confirm');
+  p.emit({ type: 'approve', id: 'g1', stage: 'confirm' });
+  await until(() => p.last('reply'), 'assertion');
+  const c = p.last('reply').credential;
+  assert.equal(c.id, idOf(v.made.credentialId));
+  assert.equal(c.rawId, c.id);
+  assert.equal(A.b64url.decode(c.response.authenticatorData)[32], 0x1d);
+  assert.deepEqual(A.b64url.decode(c.response.userHandle), Uint8Array.from([1, 2, 3]));
+  assert.ok(A.b64url.decode(c.response.signature).length >= 68);
+  assert.deepEqual(c.clientExtensionResults, {});
+  assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
+});
+
+test('fillItem: other site or disallowed id keeps waiting; an inactive owner tab is never advanced', async () => {
+  const v = await vaultItem();
+  const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions({ allowCredentials: [{ type: 'public-key', id: idOf(OTHER) }] }) });
+  p.emit({ type: 'approve', id: 'g1', stage: 'prompt' });
+  assert.equal(h.m.handleFillItem({ item: v.copy() }), true);
+  await until(() => p.last('card').card.state === 'notice', 'notice');
+  assert.equal(p.last('card').card.text, 'That passkey is for another site or account.');
+  assert.equal(h.m.getState().owner.stage, 'waiting');
+  p.emit({ type: 'decline', id: 'g1', how: 'cancel' });
+  p.emit({ type: 'request', id: 'g2', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'waiting');
+  h.setActive({ tabId: 99, windowId: 10 });                                // owner's tab is not active when the reply lands
+  assert.equal(h.m.handleFillItem({ item: v.copy() }), true);
+  await until(() => p.last('card').card.state === 'notice', 'notice 2');
+  assert.equal(h.m.getState().owner.stage, 'waiting');
+  const corrupt = v.copy(); corrupt.secureContents.fields[1].value = '{"v":1}';
+  h.setActive({ tabId: 1, windowId: 10 });
+  assert.equal(h.m.handleFillItem({ item: corrupt }), true);
+  await until(() => p.last('card').card.text === 'That passkey could not be read.', 'unreadable notice');
+});
+
+test('R2-1: a late reply after an abort only moves the new owner to confirm; signing needs a fresh Sign in', async () => {
+  const v = await vaultItem();
+  const h = harness({ index: indexWith(v.made.credentialId) });
+  const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+  assert.equal(h.m.getState().owner.id, 'A');
+  p.emit({ type: 'cancel', id: 'A' });                                     // page abort
+  assert.equal(h.m.getState().owner, null);
+  const other = A.b64url.encode(Uint8Array.from({ length: 32 }, () => 9));
+  p.emit({ type: 'request', id: 'B', kind: 'get', options: getOptions({ challenge: other }) });
+  assert.equal(h.m.getState().owner.id, 'B');
+  assert.equal(h.m.handleFillItem({ item: v.copy() }), true);              // A's delayed reply
+  await until(() => p.state() === 'confirm', 'confirm');
+  assert.equal(p.last('reply'), undefined);                                 // nothing signed
+  p.emit({ type: 'approve', id: 'A', stage: 'confirm' });                   // stale approval for A: ignored
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(p.last('reply'), undefined);
+  p.emit({ type: 'decline', id: 'B', how: 'cancel' });                      // retire B in confirm → no signature ever
+  assert.equal(p.last('reply').error.name, 'NotAllowedError');
+  p.emit({ type: 'approve', id: 'B', stage: 'confirm' });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(p.sent.filter((m) => m.type === 'reply').length, 1);
+});
+
+test('busy: a second tab stays pending, may fall back, and its ending never touches the owner', async () => {
+  const v = await vaultItem();
+  for (const ownerStage of ['waiting', 'confirm']) {
+    for (const ending of ['fallback', 'cancel', 'abort', 'timeout', 'disconnect', 'tabRemoved']) {
+      const h = harness({ index: indexWith(v.made.credentialId) });
+      const pA = makePort(1, { id: 1, windowId: 10 }); const pB = makePort(2, { id: 2, windowId: 10 });
+      h.m.onConnect(pA); h.m.onConnect(pB);
+      pA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+      if (ownerStage === 'confirm') {
+        h.m.handleFillItem({ item: v.copy() });
+        await until(() => pA.state() === 'confirm', 'confirm');
+      }
+      pB.emit({ type: 'request', id: 'B', kind: 'get', options: getOptions() });
+      assert.equal(pB.state(), 'busy');
+      assert.equal(pB.last('reply'), undefined);                            // B's promise stays pending
+      const bTimer = h.timers[h.timers.length - 1];
+      if (ending === 'fallback') { pB.emit({ type: 'decline', id: 'B', how: 'fallback' }); assert.equal(pB.last('reply').fallback, true); }
+      if (ending === 'cancel') { pB.emit({ type: 'decline', id: 'B', how: 'cancel' }); assert.equal(pB.last('reply').error.name, 'NotAllowedError'); }
+      if (ending === 'abort') pB.emit({ type: 'cancel', id: 'B' });
+      if (ending === 'timeout') { bTimer.fn(); assert.equal(pB.last('reply').error.name, 'NotAllowedError'); }
+      if (ending === 'disconnect') pB.disconnect();
+      if (ending === 'tabRemoved') h.m.onTabRemoved(2);
+      const label = ownerStage + '/' + ending;
+      assert.equal(h.m.getState().owner && h.m.getState().owner.id, 'A', label);
+      assert.equal(h.m.getState().owner.stage, ownerStage, label);
+      assert.equal(h.m.getState().pending.length, 1, label);
+      if (ownerStage === 'confirm') { pA.emit({ type: 'approve', id: 'A', stage: 'confirm' }); await until(() => pA.last('reply'), 'A still completable ' + label); assert.ok(pA.last('reply').credential, label); }
+    }
+  }
+});
+
+test('promotion: on slot release with B active, on later activation, on window focus; never when expired', async () => {
+  const v = await vaultItem();
+  const idx = () => indexWith(v.made.credentialId);
+  // (a) B's tab becomes active while A owns → A cancelled, B promoted
+  let h = harness({ index: idx() });
+  let pA = makePort(1, { id: 1, windowId: 10 }); let pB = makePort(2, { id: 2, windowId: 10 });
+  h.m.onConnect(pA); h.m.onConnect(pB);
+  pA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+  pB.emit({ type: 'request', id: 'B', kind: 'get', options: getOptions() });
+  h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+  assert.equal(pA.last('reply').error.name, 'NotAllowedError');
+  assert.equal(h.m.getState().owner.id, 'B');
+  assert.equal(pB.state(), 'waiting');
+  assert.deepEqual(h.calls.showPopup, [PAGE, PAGE]);
+  // (b) A ends while its own tab is active; B is promoted only when B's tab becomes active later
+  h = harness({ index: idx() }); pA = makePort(1, { id: 1, windowId: 10 }); pB = makePort(2, { id: 2, windowId: 10 });
+  h.m.onConnect(pA); h.m.onConnect(pB);
+  pA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+  pB.emit({ type: 'request', id: 'B', kind: 'get', options: getOptions() });
+  pA.emit({ type: 'decline', id: 'A', how: 'cancel' });
+  assert.equal(h.m.getState().owner, null);
+  assert.equal(pB.state(), 'busy');
+  h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+  assert.equal(h.m.getState().owner.id, 'B');
+  // (c) focus returns to B's window with a free slot; WINDOW_ID_NONE is ignored
+  h = harness({ index: idx() }); pA = makePort(1, { id: 1, windowId: 10 }); pB = makePort(2, { id: 2, windowId: 20 });
+  h.m.onConnect(pA); h.m.onConnect(pB);
+  pA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+  pB.emit({ type: 'request', id: 'B', kind: 'get', options: getOptions() });
+  h.m.onWindowFocusChanged(-1);
+  assert.equal(h.m.getState().owner.id, 'A');
+  pA.emit({ type: 'decline', id: 'A', how: 'cancel' });
+  assert.equal(pB.state(), 'busy');
+  h.setActive({ tabId: 2, windowId: 20 }); h.m.onWindowFocusChanged(20);
+  assert.equal(h.m.getState().owner.id, 'B');
+  // (d) an expired busy request is never promoted
+  h = harness({ index: idx() }); pA = makePort(1, { id: 1, windowId: 10 }); pB = makePort(2, { id: 2, windowId: 10 });
+  h.m.onConnect(pA); h.m.onConnect(pB);
+  pA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+  pB.emit({ type: 'request', id: 'B', kind: 'get', options: getOptions() });
+  h.timers[1].fn();                                                         // B times out while busy
+  h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+  assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
+});
+
+test('create approvals on one tab never touch a get owner on another', async () => {
+  const v = await vaultItem();
+  const h = harness({ index: indexWith(v.made.credentialId) });
+  const pA = makePort(1, { id: 1, windowId: 10 }); const pB = makePort(2, { id: 2, windowId: 10 });
+  h.m.onConnect(pA); h.m.onConnect(pB);
+  pA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+  pB.emit({ type: 'request', id: 'C', kind: 'create', options: createOptions() });
+  pB.emit({ type: 'approve', id: 'C', stage: 'prompt' });
+  await until(() => h.calls.autosave.length === 1, 'autosave');
+  pB.emit({ type: 'approve', id: 'C', stage: 'saving' });
+  assert.ok(pB.last('reply').credential);
+  assert.equal(h.m.getState().owner.id, 'A');
+  assert.equal(h.m.getState().owner.stage, 'waiting');
+});
+
+test('get: Yes with the app connection gone shows not-connected; no popup, no owner', async () => {
+  const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'get-prompt');
+  h.setConnected(false);
+  p.emit({ type: 'approve', id: 'g1', stage: 'prompt' });
+  assert.equal(p.state(), 'not-connected');
+  assert.deepEqual(h.calls.showPopup, []);
+  assert.equal(h.m.getState().owner, null);
+  p.emit({ type: 'decline', id: 'g1', how: 'fallback' });
+  assert.equal(p.last('reply').fallback, true);
+});
