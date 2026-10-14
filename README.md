@@ -219,7 +219,8 @@ dimmed page:
   answers with its normal fill: while a sign-in waits, the extension adds a hidden
   `passkey` field to the page details it reports, takes the passkey out of the app's
   fill script and removes it from every fill, so a passkey is never typed into a page.
-- **Use another way** is on every card and hands the request to the browser's own
+- **Use another way** is on every card except the one shown while a new passkey is
+  being saved (Done / Cancel only). It hands the request to the browser's own
   passkey dialog (Windows Hello, security key, phone).
 
 **Where the key lives.** Inside the item's encrypted details, exactly as protected as
@@ -227,7 +228,8 @@ the password next to it (OPVault encryption, ciphertext on Dropbox, the encrypte
 channel to the app). The field's JSON follows Bitwarden's `fido2Credentials` schema;
 `tools/1pif-to-bitwarden.js` turns a 1Password 4 export (classic 1PIF, or the
 OPVault-style JSON that 1Password 4.6 for Windows writes under File → Export) into a
-Bitwarden JSON import that restores working passkeys. Do not run passkey items through
+Bitwarden JSON import that restores working passkeys (items in the trash are skipped;
+the tool refuses to write over its input file). Do not run passkey items through
 Bitwarden's own 1PIF importer (search for `[Passkey]` in 1Password 4 to find them): it
 would copy the private key into a visible Bitwarden password. Editing the concealed field by hand breaks the passkey; Dropbox's file
 history is the undo.
@@ -248,7 +250,7 @@ history is the undo.
 - The card lives in the page's DOM. Its buttons ignore scripted clicks and clicks in
   the first 500 ms, but a page on the same site could still hide or cover it.
 - If you cancel the app's save dialog, re-send the item from the toolbar icon's
-  right-click menu **1Password passkeys → Re-save …** (kept until the browser closes).
+  right-click menu **1Password passkeys → Re-save …** (kept until the browser closes, or the extension is updated, reloaded or disabled).
 - Passkeys are unusable from 1Password 7 on the iPhone, which shows the passkey as the
   item's password (see above); register a second passkey there in iCloud Keychain.
   Sites accept several passkeys per account.
@@ -261,7 +263,7 @@ Live test record: [`docs/passkeys-testing.md`](docs/passkeys-testing.md).
 ```
 src/                    the loadable / packable MV3 extension
   manifest.json         MV3 manifest (keeps original key for dev)
-  sw-bootstrap.js       the only hand-written logic (shims + import)
+  sw-bootstrap.js       service-worker shims + import (hand-written, with passkeys/)
   rules/                declarativeNetRequest rules (deep link + dead-page redirect)
   passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core)
   ext/tldts.min.js      public-suffix list (rpId validation), unmodified
@@ -289,8 +291,8 @@ CHANGELOG.md            release history
 [`original/1Password-4.7.5.90.crx`](original/1Password-4.7.5.90.crx) is the
 **unmodified original** 1Password 4 (MV2) extension, kept for reference and for use
 in browsers that still accept Manifest V2 (e.g. current Vivaldi). The MV3 port in
-`src/` is that same extension with only `manifest.json` rewritten and
-`sw-bootstrap.js` added.
+`src/` is that same extension with `manifest.json` rewritten, `sw-bootstrap.js` and
+`passkeys/` added, and the public-suffix list `ext/tldts.min.js` vendored (see NOTICE).
 
 ## Status
 
@@ -311,11 +313,17 @@ Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4
 - **Passkeys depend on two in-page clicks and the app's untagged popup reply.** See
   the Passkeys section; a stale popup can never complete another tab's request, but
   it can leave a confusing "no passkey" notice.
-- **`chrome.storage.session` holds unsaved passkeys only until the browser closes.**
+- **`chrome.storage.session` holds unsaved passkeys only until the browser closes, or the extension is updated, reloaded or disabled** (Chrome clears it then).
   Click Done only after the app really saved the item.
 - **The 1Password 4 app stores the passkey as the item's password.** Copying it, or
   letting another 1Password client fill it, exposes the private key. Treat passkey
   items' passwords as untouchable; migrate them with tools/1pif-to-bitwarden.js.
+- **Do not use passkey items with the unmodified MV2 extension.** The MV2 extension this
+  README offers for Vivaldi (above) has no passkey strip, so filling a passkey item there
+  would type the passkey JSON, including the private key, into a real password field
+  (the app promotes the passkey to the item's Password). Do not fill passkey items there.
+- **WebAuthn PRF and largeBlob extensions are not supported** (only `credProps` is
+  reported); sites that require them will not work with these passkeys.
 - Not for any web store; not for 1Password 7/8 or account-based vaults.
   See [`docs/`](docs/) for the full design.
 

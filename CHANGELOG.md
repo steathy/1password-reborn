@@ -13,15 +13,16 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
   Page-world shim, a centered in-page card over a
   dimmed page (closed shadow root, trusted clicks only), service-worker authenticator
   (ES256, attestation `none`, counter 0), single popup owner with an explicit Sign-in
-  confirmation, recovery menu for cancelled saves; sign-in reads the passkey from the
+  confirmation, recovery menu for cancelled saves (on the toolbar icon's right-click menu only); sign-in reads the passkey from the
   app's fill script (1Password 4.6.1 never sends the raw item) and passkeys are stripped
   from every fill, so none is ever typed into a page. Saves go through the app's
   manual-save path, with the card's title as the item title. See README → Passkeys and
   docs/passkeys-design.md.
 - `tools/1pif-to-bitwarden.js` converts a 1Password 4 export (classic 1PIF or the
-  OPVault-style JSON from 1Password 4.6 for Windows) into a Bitwarden JSON import that
+  OPVault-style JSON from 1Password 4.6 for Windows; trashed items are skipped, and it
+  refuses to overwrite its input file) into a Bitwarden JSON import that
   restores the passkeys.
-- `npm test` (Node 20+): unit suites for the crypto core, request state machine, shim
+- `npm test` (Node ^22.22.2 || ^24.15.0 || >=26.0.0, what jsdom requires): unit suites for the crypto core, request state machine, shim
   rules, card trust boundary, fill-script stripping and the converter.
 
 ### Changed
