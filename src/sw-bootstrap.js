@@ -207,6 +207,16 @@ try {
   }
 })();
 
+/* 6. Passkeys ---------------------------------------------------------------- */
+// Additive and guarded: if any passkey file fails to load, fill/save keep working.
+// Order matters: tldts (global), the pure core, the pure state machine, then the wiring.
+try {
+  importScripts('ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js', 'passkeys/sw-passkeys.js');
+  console.info('[1P-MV3] passkeys loaded');
+} catch (e) {
+  console.error('[1P-MV3] passkeys failed to load', e);
+}
+
 /* Keep-alive ---------------------------------------------------------------- */
 // The engine holds the authenticated session and derived encryption keys in
 // memory. As a password manager paired with a local desktop app it expects the
