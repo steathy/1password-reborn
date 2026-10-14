@@ -85,7 +85,8 @@ test('create: prompt, Save, autosave payload, Done, credential; never a popup ow
     [['username', 'T', 'username'], ['passkey', 'P', undefined]]);
   assert.equal(login.secureContents.fields[0].value, 'alice@example.com');
   assert.equal((await A.decodePasskeyField(login.secureContents.fields[1].value)).rpId, 'example.com');
-  assert.deepEqual(Object.keys(doc).sort(), ['collectedTimestamp', 'documentUUID', 'fields', 'forms', 'url']);
+  assert.deepEqual(Object.keys(doc).sort(), ['collectedTimestamp', 'displayTitle', 'documentUUID', 'fields', 'forms', 'url']);
+  assert.equal(doc.displayTitle, 'GitHub Passkey - Alice');
   assert.equal(h.calls.recoveryPut.length, 1);
   assert.equal(h.calls.recoveryPut[0][1].login, login);
   assert.equal(p.state(), 'create-saving');
@@ -113,6 +114,7 @@ test('create: default title without a display name; credProps extension echoed',
   p.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
   await until(() => h.calls.autosave.length === 1, 'autosave');
   assert.equal(h.calls.autosave[0].login.overview.title, 'Example Passkey - alice@example.com');
+  assert.equal(h.calls.autosave[0].doc.displayTitle, 'Example Passkey - alice@example.com');
   p.emit({ type: 'approve', id: 'c1', stage: 'saving' });
   assert.deepEqual(p.last('reply').credential.clientExtensionResults, { credProps: { rk: true } });
 });

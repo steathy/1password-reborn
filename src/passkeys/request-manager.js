@@ -172,7 +172,7 @@
             ],
           },
         },
-        collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, forms: {}, fields: [], collectedTimestamp: now() },
+        collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, forms: {}, fields: [], collectedTimestamp: now() },
       };
     }
     function createDone(rec) {
