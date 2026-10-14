@@ -82,3 +82,38 @@ test('convert reads the OPVault-style export written by 1Password 4.6 for Window
   assert.equal(it.login.fido2Credentials[0].rpId, 'webauthn.io');
   assert.equal(JSON.stringify(out).includes(made.passkey.publicKey), false);
 });
+
+test('convert skips trashed items in both export layouts and reports the count', async () => {
+  const made = await A.makeCredential({
+    rp: { id: 'example.com', name: 'Example' },
+    user: { id: A.b64url.encode(Uint8Array.from([4, 5])), name: 'alice', displayName: 'Alice' },
+    challenge: A.b64url.encode(new Uint8Array(32)), pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+  }, 'https://example.com');
+  const field = A.encodePasskeyField(made.passkey);
+  const classic = (uuid, extra) => Object.assign({ uuid, title: 'Classic ' + uuid, location: 'https://example.com/', typeName: 'webforms.WebForm',
+    secureContents: { fields: [{ name: 'passkey', value: field, type: 'P' }] } }, extra);
+  const opv = (uuid, extra) => Object.assign({ category: '001', uuid, overview: { title: 'OPV ' + uuid, url: 'https://example.com/' },
+    details: { fields: [{ designation: 'password', name: 'passkey', value: field, type: 'P' }] } }, extra);
+  const text = [classic('K1'), classic('T1', { trashed: true }), opv('K2'), opv('T2', { trashed: true })].map((x) => JSON.stringify(x)).join('\n');
+  const out = convert(text);
+  assert.deepEqual(out.items.map((i) => i.name), ['Classic K1', 'OPV K2']);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'op4pk-'));
+  const inFile = path.join(tmp, 'export.1pif'); const outFile = path.join(tmp, 'out.json');
+  fs.writeFileSync(inFile, text);
+  const r = spawnSync(process.execPath, [TOOL, inFile, outFile], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /skipped 2 trashed item/);
+  assert.equal(JSON.parse(fs.readFileSync(outFile, 'utf8')).items.length, 2);
+});
+
+test('CLI refuses to overwrite its input file', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'op4pk-'));
+  const inFile = path.join(tmp, 'export.1pif');
+  fs.writeFileSync(inFile, 'original');
+  for (const out of [inFile, path.join(tmp, '..', path.basename(tmp), 'export.1pif')]) {
+    const r = spawnSync(process.execPath, [TOOL, inFile, out], { encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /same file/);
+    assert.equal(fs.readFileSync(inFile, 'utf8'), 'original');
+  }
+});

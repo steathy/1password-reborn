@@ -9,7 +9,8 @@
  *
  * Both export layouts are read: the classic 1PIF records, and the OPVault-style JSON
  * that 1Password 4.6 for Windows writes. Only items carrying a `passkey` field are
- * converted. CSV exports are not supported: 1Password 4's CSV drops web-form fields.
+ * converted, and items in the trash (`trashed: true`) are skipped. The tool refuses to
+ * run when the output path is the input file. CSV exports are not supported: 1Password 4's CSV drops web-form fields.
  * The 1PIF file is PLAIN TEXT; delete both files after importing.
  *
  * WARNING: before importing the rest of the vault with Bitwarden's own "1Password
@@ -19,6 +20,7 @@
  */
 const fs = require('node:fs');
 const crypto = require('node:crypto');
+const path = require('node:path');
 
 const SEPARATOR = /^\*\*\*[0-9a-f-]{36}\*\*\*$/i;   // 1PIF record separator lines
 const FIDO2_KEYS = ['credentialId', 'keyType', 'keyAlgorithm', 'keyCurve', 'keyValue', 'rpId',
@@ -55,9 +57,10 @@ function uriOf(item) {
   const first = Array.isArray(o.URLs) && o.URLs[0];
   return first && typeof first.u === 'string' && first.u ? first.u : null;
 }
-function convert(text) {
+function convert(text, stats) {
   const items = [];
   for (const item of parse1pif(text)) {
+    if (item.trashed === true) { if (stats) stats.trashed = (stats.trashed || 0) + (passkeyOf(item) ? 1 : 0); continue; }
     const p = passkeyOf(item);
     if (!p) continue;
     const cred = {};
@@ -92,7 +95,16 @@ if (require.main === module) {
     console.error('usage: node tools/1pif-to-bitwarden.js <export.1pif> <out.json>');
     process.exit(2);
   }
-  const result = convert(fs.readFileSync(input, 'utf8'));
+  const same = (() => {
+    try { return fs.realpathSync(input) === fs.realpathSync(output); } catch (e) { return path.resolve(input) === path.resolve(output); }
+  })();
+  if (same) {
+    console.error('refusing to run: input and output are the same file (' + input + ')');
+    process.exit(2);
+  }
+  const stats = { trashed: 0 };
+  const result = convert(fs.readFileSync(input, 'utf8'), stats);
+  if (stats.trashed) console.error('skipped ' + stats.trashed + ' trashed item(s) with a passkey');
   fs.writeFileSync(output, JSON.stringify(result, null, 2));
   console.log('wrote ' + result.items.length + ' passkey item(s) to ' + output);
 }
