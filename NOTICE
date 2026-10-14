@@ -13,8 +13,9 @@ endorsement by 1Password / AgileBits is claimed or implied.
    - src/assets/*  (icons)
    - original/1Password-4.7.5.90.crx   (the unmodified original MV2 extension)
    - dist/onepassword-mv3.crx          (the above engine repackaged for MV3;
-                                        only manifest.json + sw-bootstrap.js are
-                                        original work, the rest is unchanged)
+                                        only manifest.json, sw-bootstrap.js and
+                                        passkeys/ are original work, the rest is
+                                        unchanged)
    These are shipped verbatim from the freely-distributed 1Password extension.
    All rights reserved by the owner. "1Password" and "AgileBits" are trademarks
    of their owner. Redistributed here under the assumption of permissible reuse

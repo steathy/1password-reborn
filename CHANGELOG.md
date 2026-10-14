@@ -3,7 +3,38 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
-release version; the bundled extension keeps its own `4.7.5.90` manifest version.)
+release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
+
+## [1.4.0] - 2026-10-14
+
+### Added
+- **Passkeys.** Create and use WebAuthn passkeys stored as a concealed `passkey` field on
+  Login items in the 1Password 4 vault, titled `[Passkey] <site> - <name>` by default.
+  Page-world shim, a centered in-page card over a
+  dimmed page (closed shadow root, trusted clicks only), service-worker authenticator
+  (ES256, attestation `none`, counter 0), single popup owner with an explicit Sign-in
+  confirmation, recovery menu for cancelled saves; sign-in reads the passkey from the
+  app's fill script (1Password 4.6.1 never sends the raw item) and passkeys are stripped
+  from every fill, so none is ever typed into a page. Saves go through the app's
+  manual-save path, with the card's title as the item title. See README → Passkeys and
+  docs/passkeys-design.md.
+- `tools/1pif-to-bitwarden.js` converts a 1Password 4 export (classic 1PIF or the
+  OPVault-style JSON from 1Password 4.6 for Windows) into a Bitwarden JSON import that
+  restores the passkeys.
+- `npm test` (Node 20+): unit suites for the crypto core, request state machine, shim
+  rules, card trust boundary, fill-script stripping and the converter.
+
+### Changed
+- Manifest: `minimum_chrome_version` 111; two new content-script entries on `https://*/*`
+  and `http://localhost/*`; bundled version bumped to **4.7.5.91** so force-installed
+  copies pick up the update (the engine itself is still the untouched 4.7.5.90 build).
+- `NOTICE`: tldts 7.4.18 (MIT) added.
+
+### Known issues
+- The 1Password 4 app shows the stored passkey as the item's password (desktop and
+  1Password 7 on iPhone). Do not copy or fill it; see README → Passkeys.
+- With two waiting requests, the app's popup may close on a tab switch; reopen it
+  from the toolbar button.
 
 ## [1.3.0] - 2026-07-18
 

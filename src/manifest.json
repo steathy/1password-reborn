@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "1Password extension (desktop app required)",
-  "version": "4.7.5.90",
-  "version_name": "4.7.5.90-mv3",
+  "version": "4.7.5.91",
+  "version_name": "4.7.5.91-mv3 (port 1.4.0)",
   "description": "Extends the 1Password app on your Mac or Windows PC, so you can fill and save passwords in your browser.",
   "author": "AgileBits",
   "short_name": "1Password",

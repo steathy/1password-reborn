@@ -190,6 +190,72 @@ After a successful pair the engine also opens `agilebits.com/browsers/welcome.ht
 dead `auth.html` to a small bundled page ([`src/paired.html`](src/paired.html)), so
 you get a tidy "Connected" tab instead of a DNS error.
 
+## Passkeys
+
+Since port **1.4.0** the extension can create and use **passkeys** (WebAuthn) and store
+them in your 1Password 4 vault. The desktop app knows nothing about passkeys; the
+extension does all the WebAuthn work and uses the app only as storage.
+
+**How it works.** A page-world script takes over `navigator.credentials.create/get`.
+When a site asks for a passkey, a card appears in the middle of the page, over a
+dimmed page:
+
+- **Create:** "Save this passkey in 1Password?" with an editable title (default
+  `[Passkey] <site> - <name>`; the prefix keeps passkey items easy to find and to
+  exclude from a Bitwarden 1PIF import). *Save in 1Password* generates the key in the service
+  worker and sends a new Login to the app through the normal save path. Confirm the
+  app's save dialog: keep **Create new Login** and click **Save**, then click **Done**
+  on the card; only then does the site receive the credential. Never pick an existing
+  login in that dialog: the app then replaces that item's passkey with the new one and
+  moves the old passkey into the item's password history, so the old account can no
+  longer sign in with it. The item holds a `username` field and a concealed `passkey`
+  field. The 1Password 4 app treats that field as the item's **password**: it shows it
+  as Password (also in 1Password 7 on the iPhone) and keeps replaced values in password
+  history. Do not copy that password or let another 1Password client fill it; it is the
+  passkey's private key. This extension never types it into a page.
+- **Sign in:** pick the item in the 1Password popup, then click **Sign in** on the card.
+  That second click is required: the app's reply carries no request token, so the
+  click is what ties the chosen item to the requesting page. On 1Password 4.6.1 the app
+  answers with its normal fill: while a sign-in waits, the extension adds a hidden
+  `passkey` field to the page details it reports, takes the passkey out of the app's
+  fill script and removes it from every fill, so a passkey is never typed into a page.
+- **Use another way** is on every card and hands the request to the browser's own
+  passkey dialog (Windows Hello, security key, phone).
+
+**Where the key lives.** Inside the item's encrypted details, exactly as protected as
+the password next to it (OPVault encryption, ciphertext on Dropbox, the encrypted
+channel to the app). The field's JSON follows Bitwarden's `fido2Credentials` schema;
+`tools/1pif-to-bitwarden.js` turns a 1Password 4 export (classic 1PIF, or the
+OPVault-style JSON that 1Password 4.6 for Windows writes under File → Export) into a
+Bitwarden JSON import that restores working passkeys. Do not run passkey items through
+Bitwarden's own 1PIF importer (search for `[Passkey]` in 1Password 4 to find them): it
+would copy the private key into a visible Bitwarden password. Editing the concealed field by hand breaks the passkey; Dropbox's file
+history is the undo.
+
+**Limitations.**
+- Chromium 111+; top-level frames; modal requests only. Sites that use the browser's
+  autofill-style passkey dropdown still work through their "Sign in with a passkey"
+  button; the dropdown itself shows only browser-native passkeys.
+- ES256 only. Requests that demand a `cross-platform` authenticator go straight to
+  the browser.
+- The user-verification bit is set whenever the vault is unlocked and you clicked
+  Sign in; there is no per-operation PIN or biometric. Anyone at your unlocked PC with
+  the vault unlocked could use these passkeys, just as they could copy your passwords.
+- One passkey request at a time can use the 1Password popup; a second tab waits and
+  continues when you switch to it. Switching tab or window while waiting cancels. The
+  app shows one popup at a time and switching tabs closes it; if a waiting request
+  shows no popup, click the 1Password toolbar button and pick the item there.
+- The card lives in the page's DOM. Its buttons ignore scripted clicks and clicks in
+  the first 500 ms, but a page on the same site could still hide or cover it.
+- If you cancel the app's save dialog, re-send the item from the toolbar icon's
+  right-click menu **1Password passkeys → Re-save …** (kept until the browser closes).
+- Passkeys are unusable from 1Password 7 on the iPhone, which shows the passkey as the
+  item's password (see above); register a second passkey there in iCloud Keychain.
+  Sites accept several passkeys per account.
+
+Design and review history: [`docs/passkeys-design.md`](docs/passkeys-design.md).
+Live test record: [`docs/passkeys-testing.md`](docs/passkeys-testing.md).
+
 ## Layout
 
 ```
@@ -197,6 +263,8 @@ src/                    the loadable / packable MV3 extension
   manifest.json         MV3 manifest (keeps original key for dev)
   sw-bootstrap.js       the only hand-written logic (shims + import)
   rules/                declarativeNetRequest rules (deep link + dead-page redirect)
+  passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core)
+  ext/tldts.min.js      public-suffix list (rpId validation), unmodified
   paired.html           "Connected" page shown in place of the retired welcome page
   global.min.js         1Password engine, unmodified
   injected.min.js       content script, unmodified
@@ -204,6 +272,8 @@ src/                    the loadable / packable MV3 extension
   fillStyle.css         content-script styles, unmodified
   assets/               icons
 build/                  pack.ps1 + compute-id.js (rebuild the crx; key.pem gitignored)
+tools/                  1pif-to-bitwarden.js (migrate passkeys to Bitwarden)
+tests/                  node --test suites for the pure passkey modules
 dist/                   committed install artifacts: signed crx + extension.json
 original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)
@@ -228,6 +298,7 @@ in browsers that still accept Manifest V2 (e.g. current Vivaldi). The MV3 port i
 against 1Password 4 on Windows (tested 4.6.1.618): the service worker connects,
 first-run pairing self-completes (no dead page), and fill/save work. Each browser
 pairs under its own extension ID, so they run concurrently.
+Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4.6.1 in Edge 155; see docs/passkeys-testing.md.
 
 ## Known risks
 
@@ -237,12 +308,20 @@ pairs under its own extension ID, so they run concurrently.
   (re-handshake). Watch for reconnect churn in the console.
 - **`ws://127.0.0.1` from a service worker** is expected to work (extension origin
   is exempt from Private Network Access); confirm on your setup.
+- **Passkeys depend on two in-page clicks and the app's untagged popup reply.** See
+  the Passkeys section; a stale popup can never complete another tab's request, but
+  it can leave a confusing "no passkey" notice.
+- **`chrome.storage.session` holds unsaved passkeys only until the browser closes.**
+  Click Done only after the app really saved the item.
+- **The 1Password 4 app stores the passkey as the item's password.** Copying it, or
+  letting another 1Password client fill it, exposes the private key. Treat passkey
+  items' passwords as untouchable; migrate them with tools/1pif-to-bitwarden.js.
 - Not for any web store; not for 1Password 7/8 or account-based vaults.
   See [`docs/`](docs/) for the full design.
 
 ## Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.3.0**.
+See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.4.0**.
 
 ## License
 
