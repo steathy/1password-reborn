@@ -26,6 +26,11 @@ endorsement by 1Password / AgileBits is claimed or implied.
    © 2009-2015 Emily Stark, Mike Hamburg, Dan Boneh (Stanford University).
    Licensed under BSD-2-Clause OR GPL-2.0. See https://github.com/bitwiseshiftleft/sjcl
 
+3) tldts (public-suffix list parser)
+   - src/ext/tldts.min.js   (tldts 7.4.18, UMD build, unmodified)
+   © Rémi Berson and contributors. Licensed under the MIT License.
+   See https://github.com/remusao/tldts
+
 This is an unofficial, community-maintained compatibility port. Use at your own
 risk. It exists so owners of 1Password 4 (a discontinued product with local
 vault support) can keep using their own data in a current browser.

@@ -11,3 +11,7 @@ build/*.reg
 # OS / editor cruft
 Thumbs.db
 .DS_Store
+
+# npm (tests only; tldts is vendored into src/ext)
+node_modules/
+package-lock.json
