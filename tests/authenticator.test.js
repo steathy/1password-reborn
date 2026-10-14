@@ -201,3 +201,28 @@ test('getAssertion enforces rpId, allowCredentials, and origin', async () => {
   const got = await A.getAssertion({ challenge, rpId: 'example.com', allowCredentials: [{ type: 'public-key', id: myId }] }, ORIGIN, made.passkey);
   assert.equal(got.credentialId, made.credentialId);
 });
+
+test('passkey field encodes compactly and decodes with an integrity check', async () => {
+  const made = await A.makeCredential(createOptions, ORIGIN);
+  const value = A.encodePasskeyField(made.passkey);
+  assert.equal(value.includes('\n'), false);
+  assert.ok(value.length < 1200, `field is ${value.length} bytes`);
+  assert.deepEqual(await A.decodePasskeyField(value), made.passkey);
+});
+
+test('decodePasskeyField rejects tampered or truncated values', async () => {
+  const made = await A.makeCredential(createOptions, ORIGIN);
+  const good = made.passkey;
+  await assert.rejects(A.decodePasskeyField('not json'), { name: 'passkey-corrupt' });
+  await assert.rejects(A.decodePasskeyField(JSON.stringify({ ...good, v: 2 })), { name: 'passkey-corrupt' });
+  await assert.rejects(A.decodePasskeyField(JSON.stringify({ ...good, keyValue: undefined })), { name: 'passkey-corrupt' });
+  await assert.rejects(A.decodePasskeyField(JSON.stringify({ ...good, credentialId: 'zz' })), { name: 'passkey-corrupt' });
+  // flip one byte inside the private key
+  const bytes = A.b64url.decode(good.keyValue); bytes[40] ^= 0x55;
+  await assert.rejects(A.decodePasskeyField(JSON.stringify({ ...good, keyValue: A.b64url.encode(bytes) })), { name: 'passkey-corrupt' });
+  // swap in another key's public half
+  const other = await A.makeCredential(createOptions, ORIGIN);
+  await assert.rejects(A.decodePasskeyField(JSON.stringify({ ...good, publicKey: other.passkey.publicKey })), { name: 'passkey-corrupt' });
+  // truncated JSON
+  await assert.rejects(A.decodePasskeyField(JSON.stringify(good).slice(0, -20)), { name: 'passkey-corrupt' });
+});

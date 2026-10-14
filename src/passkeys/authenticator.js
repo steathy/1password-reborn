@@ -235,5 +235,26 @@
     };
   }
 
-  return { fail, b64url, concat, sha256, cbor, derFromRaw, validateRpId, uuidFromBytes, bytesFromUuid, AAGUID, FLAGS, makeCredential, getAssertion };
+  /* ---------- vault field codec (spec: Vault field format) ---------- */
+  const REQUIRED_FIELDS = ['credentialId', 'rpId', 'userHandle', 'keyValue', 'publicKey'];
+  function encodePasskeyField(passkey) {
+    return JSON.stringify(passkey);
+  }
+  async function decodePasskeyField(value) {
+    let p;
+    try { p = JSON.parse(value); } catch (e) { throw fail('passkey-corrupt', 'passkey field is not JSON'); }
+    if (!p || p.v !== 1 || REQUIRED_FIELDS.some((k) => typeof p[k] !== 'string')) throw fail('passkey-corrupt', 'passkey field is missing data');
+    bytesFromUuid(p.credentialId);                       // throws passkey-corrupt
+    let priv, pub;
+    try {
+      priv = await subtle.importKey('pkcs8', b64url.decode(p.keyValue), { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']);
+      pub = await subtle.importKey('spki', b64url.decode(p.publicKey), { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']);
+    } catch (e) { throw fail('passkey-corrupt', 'passkey key material does not import'); }
+    const a = await subtle.exportKey('jwk', priv);
+    const b = await subtle.exportKey('jwk', pub);
+    if (a.x !== b.x || a.y !== b.y) throw fail('passkey-corrupt', 'public key does not match private key');
+    return p;
+  }
+
+  return { fail, b64url, concat, sha256, cbor, derFromRaw, validateRpId, uuidFromBytes, bytesFromUuid, AAGUID, FLAGS, makeCredential, getAssertion, encodePasskeyField, decodePasskeyField };
 });
