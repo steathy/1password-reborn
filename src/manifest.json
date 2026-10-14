@@ -6,6 +6,7 @@
   "description": "Extends the 1Password app on your Mac or Windows PC, so you can fill and save passwords in your browser.",
   "author": "AgileBits",
   "short_name": "1Password",
+  "minimum_chrome_version": "111",
   "homepage_url": "https://agilebits.com/onepassword",
   "icons": {
     "16": "assets/Icon-16.png",
@@ -64,6 +65,19 @@
         "*://*.bizographics.com/collect/*",
         "*://*.musthird.com/*"
       ]
+    },
+    {
+      "matches": ["https://*/*", "http://localhost/*"],
+      "all_frames": false,
+      "run_at": "document_start",
+      "world": "MAIN",
+      "js": ["passkeys/shim-core.js", "passkeys/page-shim.js"]
+    },
+    {
+      "matches": ["https://*/*", "http://localhost/*"],
+      "all_frames": false,
+      "run_at": "document_start",
+      "js": ["passkeys/card.js", "passkeys/content-bridge.js"]
     }
   ],
   "declarative_net_request": {
