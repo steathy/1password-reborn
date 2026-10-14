@@ -25,9 +25,9 @@ const button = (card, label) => Array.from(card._root.querySelectorAll('button')
 
 test('every state renders the spec copy and buttons', () => {
   const { card } = setup();
-  card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: 'GitHub Passkey - Alice' });
+  card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: '[Passkey] GitHub - Alice' });
   assert.deepEqual(buttons(card), ['Save in 1Password', 'Use another way']);
-  assert.equal(card._root.querySelector('input').value, 'GitHub Passkey - Alice');
+  assert.equal(card._root.querySelector('input').value, '[Passkey] GitHub - Alice');
   card.show('create-excluded', { site: 'GitHub' });
   assert.deepEqual(buttons(card), ['Use another way', 'Cancel']);
   card.show('create-saving');
@@ -87,7 +87,7 @@ test('script clicks and synthetic events never approve; a trusted click after ar
 
 test('Save sends the edited title; decline buttons send fallback or cancel', () => {
   const t = setup({ isTrusted: () => true });
-  t.card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: 'GitHub Passkey - Alice' });
+  t.card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: '[Passkey] GitHub - Alice' });
   t.advance(500);
   t.card._root.querySelector('input').value = 'Work GitHub';
   button(t.card, 'Save in 1Password').click();
@@ -115,7 +115,7 @@ test('re-rendering re-arms the delay', () => {
 
 test('card renders as a full-viewport modal with a centered box', () => {
   const t = setup({ isTrusted: () => true });
-  t.card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: 'GitHub Passkey - Alice' });
+  t.card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: '[Passkey] GitHub - Alice' });
   t.advance(500);                                                              // armed and trusted: only the backdrop is the reason for no call
   const css = t.card._root.querySelector('style').textContent;
   assert.ok(css.includes('position:fixed'));

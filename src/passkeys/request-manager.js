@@ -123,7 +123,7 @@
     function userLabel(rec) { const u = rec.options.user || {}; return u.displayName || u.name || ''; }
     function defaultTitle(rec) {
       const n = userLabel(rec);
-      return n ? siteName(rec) + ' Passkey - ' + n : siteName(rec) + ' Passkey';
+      return n ? '[Passkey] ' + siteName(rec) + ' - ' + n : '[Passkey] ' + siteName(rec);
     }
     function startCreate(rec) {
       const excluded = new Set((rec.options.excludeCredentials || [])

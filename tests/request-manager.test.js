@@ -71,22 +71,22 @@ test('create: prompt, Save, autosave payload, Done, credential; never a popup ow
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
   assert.equal(p.state(), 'create-prompt');
-  assert.equal(p.last('card').card.defaultTitle, 'Example Passkey - Alice');
+  assert.equal(p.last('card').card.defaultTitle, '[Passkey] Example - Alice');
   assert.equal(h.m.getState().owner, null);
   p.emit({ type: 'approve', id: 'c1', stage: 'saving' });            // forged early Done: ignored
   assert.equal(p.last('reply'), undefined);
-  p.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '  GitHub Passkey - Alice ' });
+  p.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '  [Passkey] GitHub - Alice ' });
   await until(() => h.calls.autosave.length === 1, 'autosave');
   const { login, doc, url } = h.calls.autosave[0];
   assert.equal(url, PAGE);
   assert.equal(login.type_name, 'webforms.WebForm');
-  assert.deepEqual(login.overview, { title: 'GitHub Passkey - Alice', location: PAGE });
+  assert.deepEqual(login.overview, { title: '[Passkey] GitHub - Alice', location: PAGE });
   assert.deepEqual(login.secureContents.fields.map((f) => [f.name, f.type, f.designation]),
     [['username', 'T', 'username'], ['passkey', 'P', undefined]]);
   assert.equal(login.secureContents.fields[0].value, 'alice@example.com');
   assert.equal((await A.decodePasskeyField(login.secureContents.fields[1].value)).rpId, 'example.com');
   assert.deepEqual(Object.keys(doc).sort(), ['collectedTimestamp', 'displayTitle', 'documentUUID', 'fields', 'forms', 'url']);
-  assert.equal(doc.displayTitle, 'GitHub Passkey - Alice');
+  assert.equal(doc.displayTitle, '[Passkey] GitHub - Alice');
   assert.deepEqual(doc.fields.map((f) => [f.opid, f.elementNumber, f.htmlID, f.htmlName, f.type, f['label-tag'], f.visible, f.viewable]), [['__0', 0, 'username', 'username', 'text', 'username', true, true], ['__1', 1, 'passkey', 'passkey', 'password', 'passkey', true, true]]);
   assert.equal(doc.fields[0].value, 'alice@example.com');
   assert.equal(doc.fields[1].value, login.secureContents.fields[1].value);
@@ -113,11 +113,11 @@ test('create: default title without a display name; credProps extension echoed',
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   const o = createOptions({ extensions: { credProps: true } }); o.user = { ...o.user, displayName: '' };
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: o });
-  assert.equal(p.last('card').card.defaultTitle, 'Example Passkey - alice@example.com');
+  assert.equal(p.last('card').card.defaultTitle, '[Passkey] Example - alice@example.com');
   p.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
   await until(() => h.calls.autosave.length === 1, 'autosave');
-  assert.equal(h.calls.autosave[0].login.overview.title, 'Example Passkey - alice@example.com');
-  assert.equal(h.calls.autosave[0].doc.displayTitle, 'Example Passkey - alice@example.com');
+  assert.equal(h.calls.autosave[0].login.overview.title, '[Passkey] Example - alice@example.com');
+  assert.equal(h.calls.autosave[0].doc.displayTitle, '[Passkey] Example - alice@example.com');
   p.emit({ type: 'approve', id: 'c1', stage: 'saving' });
   assert.deepEqual(p.last('reply').credential.clientExtensionResults, { credProps: { rk: true } });
 });
