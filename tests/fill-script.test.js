@@ -124,3 +124,55 @@ test('emptyScripts sets every script to {} in both forms', () => {
   assert.deepEqual(b.scripts[1].script, {});
   assert.doesNotThrow(() => FS.emptyScripts(null));
 });
+
+async function otherPasskeyJson() {
+  const o = { ...createOptions, user: { ...createOptions.user, id: A.b64url.encode(Uint8Array.from([7, 7])) } };
+  return A.encodePasskeyField((await A.makeCredential(o, ORIGIN, { uv: true })).passkey);
+}
+
+test('takePasskeys strips the {operation, parameters} and {action, values} op shapes', async () => {
+  const json = await passkeyJson();
+  const keep = ['fill_by_opid', '__1', 'bob'];
+  const p = { script: [keep, { operation: 'fill_by_opid', parameters: ['__3', json] }, { action: 'fill_by_opid', values: ['__4', json] }] };
+  const r = FS.takePasskeys(p);
+  assert.deepEqual(r.values, [json]);
+  assert.equal(r.hadOps, true);
+  assert.deepEqual(p.script, [keep]);
+});
+
+test('takePasskeys strips a passkey nested inside an op value', async () => {
+  const json = await passkeyJson();
+  const p = { script: [['fill_by_opid', '__3', [json]]] };
+  const r = FS.takePasskeys(p);
+  assert.deepEqual(r.values, [json]);
+  assert.equal(r.hadOps, false);
+  assert.deepEqual(p.script, []);
+});
+
+test('takePasskeys empties an object-form script that holds a passkey', async () => {
+  const json = await passkeyJson();
+  const p = { script: { 0: ['fill_by_opid', '__3', json] } };
+  const r = FS.takePasskeys(p);
+  assert.deepEqual(r.values, [json]);
+  assert.deepEqual(p.script, {});
+  const clean = { script: { 0: ['fill_by_opid', '__3', 'bob'] } };
+  FS.takePasskeys(clean);
+  assert.deepEqual(clean.script, { 0: ['fill_by_opid', '__3', 'bob'] });
+  const s = { script: JSON.stringify({ 0: ['fill_by_opid', '__op4pk', json] }) };
+  FS.takePasskeys(s);
+  assert.deepEqual(s.script, {});
+});
+
+test('takePasskeys fails closed on pathologically deep or cyclic ops', () => {
+  const cyc = ['fill_by_opid', '__3']; cyc.push(cyc);
+  const p = { script: [cyc, ['fill_by_opid', '__1', 'bob']] };
+  assert.doesNotThrow(() => FS.takePasskeys(p));
+  assert.deepEqual(p.script, [['fill_by_opid', '__1', 'bob']]);
+});
+
+test('takePasskeys returns values in first-occurrence order', async () => {
+  const a = await passkeyJson(), b = await otherPasskeyJson();
+  assert.notEqual(a, b);
+  const p = { script: [['fill_by_opid', '__1', a], ['fill_by_opid', '__2', b], ['fill_by_opid', '__3', a]] };
+  assert.deepEqual(FS.takePasskeys(p).values, [a, b]);
+});

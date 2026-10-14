@@ -51,16 +51,33 @@
     return Array.isArray(payload.scripts) && payload.scripts.length ? payload.scripts : [payload];
   }
 
-  // Strips passkey ops from one array of ops in place; returns the removed passkey values.
+  const MAX_DEPTH = 8;
+  // True when x holds the marker opid or a passkey value anywhere (arrays, plain-object values);
+  // passkey values are added to `values` (first occurrence order, de-duplicated). Too deep, cyclic
+  // or unreadable input counts as a hit (fail closed).
+  function scan(x, values, depth) {
+    try {
+      if (typeof x === 'string') {
+        if (x === MARKER_OPID) return true;
+        if (!isPasskeyValue(x)) return false;
+        if (!values.includes(x)) values.push(x);
+        return true;
+      }
+      if (!x || typeof x !== 'object') return false;
+      if (depth >= MAX_DEPTH) return true;
+      let hit = false;
+      for (const v of Array.isArray(x) ? x : Object.values(x)) if (scan(v, values, depth + 1)) hit = true;
+      return hit;
+    } catch (e) { return true; }
+  }
+
+  // Removes every op that holds a passkey, whatever its shape; returns the remaining op count.
   function stripOps(ops, values) {
-    for (let i = ops.length - 1; i >= 0; i--) {
-      const op = ops[i];
-      if (!Array.isArray(op)) continue;
-      const hit = op[1] === MARKER_OPID || op.some(isPasskeyValue);
-      if (!hit) continue;
-      ops.splice(i, 1);
-      for (const x of op) if (isPasskeyValue(x) && !values.includes(x)) values.unshift(x);
-    }
+    let w = 0;
+    const n = ops.length;
+    for (let i = 0; i < n; i++) if (!scan(ops[i], values, 0)) ops[w++] = ops[i];
+    ops.length = w;
+    return w;
   }
 
   function takePasskeys(payload) {
@@ -70,16 +87,20 @@
       for (const entry of entriesOf(payload)) {
         try {
           if (!entry || typeof entry !== 'object') continue;
-          let ops = null;
           const s = entry.script;
-          if (Array.isArray(s)) ops = s;
-          else if (typeof s === 'string') { const p = JSON.parse(s); if (Array.isArray(p)) ops = p; }
-          if (!ops) continue;
-          const found = [];
-          stripOps(ops, found);
-          for (const v of found) if (!values.includes(v)) values.push(v);
-          if (typeof s === 'string') entry.script = JSON.stringify(ops);
-          if (ops.length) hadOps = true;
+          if (Array.isArray(s)) { if (stripOps(s, values)) hadOps = true; continue; }
+          let parsed = null;
+          if (typeof s === 'string') {
+            try { parsed = JSON.parse(s); } catch (e) { continue; }       // not JSON: nothing the executor reads as ops
+            if (Array.isArray(parsed)) {
+              const left = stripOps(parsed, values);
+              entry.script = JSON.stringify(parsed);
+              if (left) hadOps = true;
+              continue;
+            }
+          }
+          if (s && typeof s === 'object') parsed = s;
+          if (parsed && typeof parsed === 'object' && scan(parsed, values, 0)) entry.script = {};
         } catch (e) { /* skip malformed entry */ }
       }
     } catch (e) { /* total */ }
