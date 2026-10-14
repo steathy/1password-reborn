@@ -67,7 +67,7 @@
   // (spec: Create step 3; Chrome storage docs: "asynchronous preload from storage").
   const ready = Promise.all([indexReady, activeReady]);
 
-  /* ---------- recovery store: chrome.storage.session['op4pk.recovery'] (dies with the browser) ---------- */
+  /* ---------- recovery store: chrome.storage.session['op4pk.recovery'] (cleared when the browser closes, or when the extension is updated, reloaded or disabled) ---------- */
   // Every operation is a read-modify-write of one object, so they run one at a time through a
   // queue: two concurrent puts, or a put racing a remove or Discard all, would otherwise drop
   // or resurrect entries. The wrappers reject on chrome.runtime.lastError; the manager must
@@ -217,7 +217,7 @@
 
   /* ---------- context menu: "1Password passkeys" → Re-save <title> / Discard all ---------- */
   const ROOT_ID = 'op4pk-root';
-  const CONTEXTS = ['action', 'page'];
+  const CONTEXTS = ['action'];
   let rebuilding = Promise.resolve();
   function rebuildMenus() {
     rebuilding = rebuilding.then(async () => {
