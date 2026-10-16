@@ -359,9 +359,42 @@ function Install-Force($payload) {
   if (-not $target) { $target = [string]($max + 1) }
   Set-ItemProperty -Path $key -Name $target -Value "$extId;$UpdateUrl"
 
+  # Update route. The forcelist alone only installs; later update checks follow the crx
+  # manifest's update_url (none before 1.4.0, so they went to the Web Store and never
+  # found us). A per-ID override_update_url in ExtensionSettings makes them follow the
+  # policy URL above instead. Merge-OverrideUpdateUrl decides whether that is safe here.
+  $settingsKey = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
+  $raw = $null
+  try { $raw = (Get-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -ErrorAction Stop).ExtensionSettings } catch {}
+  $route = Merge-OverrideUpdateUrl -Json ([string]$raw) -ExtId $extId -UpdateUrl $UpdateUrl
+  if ($route.Result -eq 'migrated') {
+    Set-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -Value $route.Json -Type String
+  }
+
   Write-Host ''
   Write-Mid 'Force-install policy set for extension:' 'Green'
   Write-Mid ('  ' + $extId) 'Green'
+  switch ($route.Result) {
+    'migrated' {
+      Write-Mid 'Updates now come from' 'Green'
+      Write-Mid ('  ' + $UpdateUrl) 'Green'
+    }
+    'conflict' {
+      $mode = if ($null -eq $route.Mode) { '(none)' } else { [string]$route.Mode }
+      $url  = if ($null -eq $route.UpdateUrl) { '(none)' } else { [string]$route.UpdateUrl }
+      Write-Mid 'Update route NOT switched: another policy already routes this' 'Yellow'
+      Write-Mid 'extension in ExtensionSettings, so the migration was not applied.' 'Yellow'
+      Write-Mid ('  installation_mode: ' + $mode) 'Yellow'
+      Write-Mid ('  update_url:        ' + $url) 'Yellow'
+      Write-Mid 'To switch: set that update_url to' 'Gray'
+      Write-Mid ('  ' + $UpdateUrl) 'Gray'
+      Write-Mid 'or remove the entry, then run Force install again.' 'Gray'
+    }
+    'invalid' {
+      Write-Mid 'Update route NOT switched: the ExtensionSettings policy value is not' 'Yellow'
+      Write-Mid 'valid JSON. It was left unchanged; fix it, then run Force install again.' 'Yellow'
+    }
+  }
   Restart-Chrome
   Write-Host ''
   Write-Mid "chrome://extensions should show 'Installed by policy'." 'Gray'
@@ -499,6 +532,25 @@ function Uninstall-Force($payload) {
     }
     $rem = (Get-Item -Path $key).GetValueNames() | Where-Object { $_ -ne '' }
     if (-not $rem) { Remove-Item -Path $key -Force }
+  }
+  # Our override_update_url lives in an entry without installation_mode (the shape Force
+  # install creates). Entries with installation_mode belong to another policy: left alone.
+  $settingsKey = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
+  $raw = $null
+  try { $raw = (Get-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -ErrorAction Stop).ExtensionSettings } catch {}
+  $route = Remove-OverrideUpdateUrl -Json ([string]$raw) -ExtId $extId
+  switch ($route.Result) {
+    'removed' {
+      if ($null -eq $route.Json) {
+        Remove-ItemProperty -Path $settingsKey -Name 'ExtensionSettings'
+        Write-Mid 'Removed the ExtensionSettings value (nothing else was in it).' 'Gray'
+      } else {
+        Set-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -Value $route.Json -Type String
+        Write-Mid 'Removed override_update_url from ExtensionSettings.' 'Gray'
+      }
+    }
+    'foreign' { Write-Mid 'The ExtensionSettings entry for this extension belongs to another policy; left unchanged.' 'Gray' }
+    'invalid' { Write-Mid 'ExtensionSettings is not valid JSON; left unchanged.' 'Yellow' }
   }
   Restart-Chrome
   Write-Host ''
