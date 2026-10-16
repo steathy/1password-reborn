@@ -1,5 +1,5 @@
 /*
- * authenticator.js — pure WebAuthn authenticator core for the 1Password 4 MV3 port.
+ * authenticator.js — pure WebAuthn authenticator core for 1Password Reborn.
  * No chrome.* and no DOM: loads via importScripts() in the service worker and via
  * require() in Node tests. Uses only globalThis.crypto.subtle and (for rpId checks)
  * the vendored tldts global.
