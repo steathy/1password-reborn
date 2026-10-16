@@ -7,6 +7,24 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
 
 ## [1.4.0] - 2026-10-14
 
+### Changed
+- **Renamed to 1Password Reborn** (was `1password4-mv3`). The browser now shows
+  "1Password Reborn (desktop app required)"; the repo is `steathy/1password-reborn`, the
+  crx `dist/1password-reborn.crx`, the installer folder `%LOCALAPPDATA%\1Password-Reborn`.
+  Both extension IDs are unchanged. Existing installs: see README → Moving from
+  1password4-mv3; the installer guides the switch.
+- **Force installs get a real update route.** The signed crx now carries `update_url`, and
+  Force install sets a per-ID `override_update_url` in the `ExtensionSettings` policy next
+  to its `ExtensionInstallForcelist` entry, so a force-installed copy updates from GitHub
+  (earlier crx files had no `update_url`, so policy installs checked the Web Store and never
+  updated). When another policy already routes the extension the installer reports the
+  conflict and changes nothing there; Uninstall removes only the override it created.
+  Designed from Chrome's policy source; not tested on a managed device.
+- Manifest: `minimum_chrome_version` 111; two new content-script entries on `https://*/*`
+  and `http://localhost/*`; bundled version bumped to **4.7.5.91** so force-installed
+  copies pick up the update (the engine itself is still the untouched 4.7.5.90 build).
+- `NOTICE`: tldts 7.4.18 (MIT) added.
+
 ### Added
 - **Passkeys.** Create and use WebAuthn passkeys stored as a concealed `passkey` field on
   Login items in the 1Password 4 vault, titled `[Passkey] <site> - <name>` by default.
@@ -24,12 +42,6 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
   restores the passkeys.
 - `npm test` (Node ^22.22.2 || ^24.15.0 || >=26.0.0, what jsdom requires): unit suites for the crypto core, request state machine, shim
   rules, card trust boundary, fill-script stripping and the converter.
-
-### Changed
-- Manifest: `minimum_chrome_version` 111; two new content-script entries on `https://*/*`
-  and `http://localhost/*`; bundled version bumped to **4.7.5.91** so force-installed
-  copies pick up the update (the engine itself is still the untouched 4.7.5.90 build).
-- `NOTICE`: tldts 7.4.18 (MIT) added.
 
 ### Known issues
 - The 1Password 4 app shows the stored passkey as the item's password (desktop and
@@ -184,10 +196,11 @@ on 1Password 4.6.1.618 (Windows 10).
   native-messaging host on Windows, so the native-messaging attempt always falls
   back — cosmetic, no performance impact.
 
-[1.3.0]: https://github.com/steathy/1password4-mv3/releases/tag/v1.3.0
-[1.2.0]: https://github.com/steathy/1password4-mv3/releases/tag/v1.2.0
-[1.1.0]: https://github.com/steathy/1password4-mv3/releases/tag/v1.1.0
-[1.0.3]: https://github.com/steathy/1password4-mv3/releases/tag/v1.0.3
-[1.0.2]: https://github.com/steathy/1password4-mv3/releases/tag/v1.0.2
-[1.0.1]: https://github.com/steathy/1password4-mv3/releases/tag/v1.0.1
-[1.0.0]: https://github.com/steathy/1password4-mv3/releases/tag/v1.0.0
+[1.4.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.4.0
+[1.3.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.3.0
+[1.2.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.2.0
+[1.1.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.1.0
+[1.0.3]: https://github.com/steathy/1password-reborn/releases/tag/v1.0.3
+[1.0.2]: https://github.com/steathy/1password-reborn/releases/tag/v1.0.2
+[1.0.1]: https://github.com/steathy/1password-reborn/releases/tag/v1.0.1
+[1.0.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.0.0

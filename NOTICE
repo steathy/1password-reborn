@@ -6,13 +6,13 @@ They remain the property of their respective owners and are included only to
 keep a legally-purchased legacy product working. No affiliation with or
 endorsement by 1Password / AgileBits is claimed or implied.
 
-1) 1Password 4 browser extension (© AgileBits Inc. / 1Password)
+1) classic 1Password browser extension, 4.7.5.90 (© AgileBits Inc. / 1Password)
    - src/global.min.js
    - src/injected.min.js
    - src/fillStyle.css
    - src/assets/*  (icons)
    - original/1Password-4.7.5.90.crx   (the unmodified original MV2 extension)
-   - dist/onepassword-mv3.crx          (the above engine repackaged for MV3;
+   - dist/1password-reborn.crx         (the above engine repackaged for MV3;
                                         only manifest.json, sw-bootstrap.js and
                                         passkeys/ are original work, the rest is
                                         unchanged)
@@ -33,5 +33,5 @@ endorsement by 1Password / AgileBits is claimed or implied.
    See https://github.com/remusao/tldts
 
 This is an unofficial, community-maintained compatibility port. Use at your own
-risk. It exists so owners of 1Password 4 (a discontinued product with local
-vault support) can keep using their own data in a current browser.
+risk. It exists so owners of the classic 1Password desktop apps (4–7, discontinued,
+with local vault support) can keep using their own data in a current browser.
