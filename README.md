@@ -1,34 +1,42 @@
-# 1Password 4 extension — Manifest V3 port
+# 1Password Reborn
+
+The classic 1Password extension, reborn for today's browsers — now with passkeys.
 
 > **Unofficial community port — not affiliated with, authorized by, or endorsed by
 > 1Password / AgileBits.** "1Password" and "AgileBits" are trademarks of their owner.
-> This exists only to keep a discontinued product (1Password 4, with local vault
-> support) working in a current browser, using your own data. Provided as-is, no
+> This exists only to keep discontinued products (the 1Password 4–7 desktop apps, with
+> local vault support) working in a current browser, using your own data. Provided as-is, no
 > warranty. See [`NOTICE`](NOTICE) for third-party code and [`LICENSE`](LICENSE).
 
-A minimal Manifest V3 port of the legacy **1Password 4 (v4.7.5.90)** browser
-extension — the one that pairs with the **1Password 4 desktop app**, the last
-generation supporting local / Dropbox vault sync. The original extension still
-loads in browsers that accept Manifest V2 (Vivaldi, older Edge) but stopped loading
-in Chrome after the MV2 sunset. This port makes it load and work again in any
-current **Chromium** browser that supports Manifest V3 — **Chrome, Edge, Brave,**
-and the like. (This README says "the browser" generically; use whichever you like.)
+> Formerly `1password4-mv3`.
+
+**1Password Reborn** is the classic **1Password extension (4.7.5.90)** — the one that
+pairs with the **1Password 4–7 desktop apps**, the generation that still supports local /
+Dropbox vaults — ported to Manifest V3 and extended with **passkeys**, which the classic
+extension never had. The original extension still loads in browsers that accept Manifest
+V2 (Vivaldi, older Edge) but stopped loading in Chrome after the MV2 sunset. Reborn loads
+and works in any current **Chromium** browser — **Chrome, Edge, Brave,** and the like.
+(This README says "the browser" generically; use whichever you like.)
 
 It talks to the **unmodified** desktop app over the same two transports the
 original used — native messaging (`2bua8c4s2c.com.agilebits.1password`) and a
 `ws://127.0.0.1` fallback — so no changes to the desktop app are required.
 
-> **Compatibility:** designed to work with **any 1Password 4.x** desktop version,
-> since the extension↔app protocol is unchanged across the 4 series. **Tested on
-> 1Password 4.6.1.618** (Windows 10) with **Chrome and Edge**. Other 4.x builds and
-> other Chromium browsers should work but are unverified — reports welcome.
+> **Compatibility** (the extension↔app protocol is the same across these apps; what is
+> verified is listed per app):
+> - **1Password 4 for Windows** (4.6.1.618, Windows 10): verified, including passkeys, in
+>   Chrome and Edge.
+> - **1Password 7 for Windows**: works for passwords; early use, not yet long-term tested;
+>   passkeys untested.
+> - **1Password 6**: untested.
+> - Other Chromium browsers should work but are unverified — reports welcome.
 
 ## Install (one command)
 
 Open **Windows PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/steathy/1password4-mv3/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/steathy/1password-reborn/main/install.ps1 | iex
 ```
 
 It downloads this repo, then shows a menu:
@@ -40,7 +48,7 @@ It downloads this repo, then shows a menu:
 ```
 
 - **Load unpacked** (recommended) stages the files under
-  `%LOCALAPPDATA%\1Password4-MV3\src`, copies that path to your clipboard, applies
+  `%LOCALAPPDATA%\1Password-Reborn\src`, copies that path to your clipboard, applies
   the first-run fix (see below), then prints the steps: in your browser, open the
   extensions page (`chrome://extensions` in Chrome, `edge://extensions` in Edge),
   flip on **Developer mode** (one-time), click **Load unpacked**, and `Ctrl+V` the
@@ -59,9 +67,33 @@ It downloads this repo, then shows a menu:
 > The same script works from a local clone too: double-click **`install.bat`**.
 
 > **Keep the load-unpacked folder in place.** Load unpacked reads the extension
-> directly from its folder (`%LOCALAPPDATA%\1Password4-MV3\src` or your clone) on
+> directly from its folder (`%LOCALAPPDATA%\1Password-Reborn\src` or your clone) on
 > **every** browser launch — move or delete it and the extension disappears. To
 > remove it, use the browser's extensions page → Remove, then delete the folder.
+
+## Moving from 1password4-mv3
+
+Reborn is the same extension under a new name, with the same two extension IDs, so your
+pairing and your vault are untouched. Only the folder and the update route change.
+
+- **Load unpacked:** re-run the installer (the one-liner above, or `install.bat`) and choose
+  **Load unpacked**. When it finds the old `%LOCALAPPDATA%\1Password4-MV3` folder it adds a
+  step to remove the old extension and asks about the old folder at the end. By hand: on
+  the extensions page, **Remove** the card that still says *1Password extension (desktop
+  app required)*, then **Load unpacked** the new folder, and approve pairing if the
+  1Password app asks.
+- **Delete the old folder only after every browser and profile that loaded it has
+  switched.** Several browsers can load the same folder, and switching one does not
+  switch the others; the installer's prompt defaults to keeping it.
+- **Force install:** re-run the installer and choose **Force install**. It points the
+  `ExtensionInstallForcelist` entry at the new update URL and sets a per-ID
+  `override_update_url` in `ExtensionSettings`, so the installed copy updates in place on
+  the browser's next update check. This is designed from Chrome's policy documentation and
+  source and has not been tested on a managed device. If another policy already routes the
+  extension (its `ExtensionSettings` entry has an `installation_mode`), the installer says
+  so, changes nothing there, and tells you which `update_url` to change. Force installs
+  made before 1.4.0 never received updates from GitHub: the crx had no `update_url` and
+  no override was set.
 
 ## Load unpacked by hand (no installer)
 
@@ -70,7 +102,7 @@ Fastest way to test, or to add a second browser. Because `src/manifest.json` kee
 extension ID**, which the native-messaging host installed by 4.6.1 already
 authorizes — so native messaging should work with no further setup.
 
-1. Make sure the 1Password **4** desktop app is running and unlocked.
+1. Make sure the 1Password desktop app is running and unlocked.
 2. If this is a machine that never paired a browser, apply the first-run fix once —
    see [First-run machines](#first-run-machines-the-browser-code-signature-check).
 3. Open your browser's extensions page — `chrome://extensions` (Chrome),
@@ -148,7 +180,7 @@ extension ID (see [`docs/design.md`](docs/design.md), Component 5).
 **Uninstall:** menu option 3, or run [`uninstall.ps1`](uninstall.ps1).
 
 **Rebuild after changing `src/`:** run `build\pack.ps1` (needs Chrome + Node). It
-re-signs the crx and refreshes `dist/onepassword-mv3.crx` + `dist/extension.json`;
+re-signs the crx (its manifest gets `update_url`) and refreshes `dist/1password-reborn.crx` + `dist/extension.json`;
 commit those and the one-command install picks them up.
 
 > Forking: change `$Owner` / `$Repo` / `$Branch` at the top of `install.ps1` and the
@@ -276,12 +308,12 @@ src/                    the loadable / packable MV3 extension
 build/                  pack.ps1 + compute-id.js (rebuild the crx; key.pem gitignored)
 tools/                  1pif-to-bitwarden.js (migrate passkeys to Bitwarden)
 tests/                  node --test suites for the pure passkey modules
-dist/                   committed install artifacts: signed crx + extension.json
+dist/                   committed install artifacts: signed crx + extension.json + updates.xml
 original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)
 seed-op4.ps1            first-run fix: set VerifyCodeSignature=0 (accept modern browsers)
 uninstall.ps1           remove the force-install policy
-docs/                   design spec
+docs/                   design specs, plans, reviews, test record
 LICENSE / NOTICE        MIT (original work) + third-party notices
 CHANGELOG.md            release history
 ```
@@ -324,7 +356,7 @@ Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4
   (the app promotes the passkey to the item's Password). Do not fill passkey items there.
 - **WebAuthn PRF and largeBlob extensions are not supported** (only `credProps` is
   reported); sites that require them will not work with these passkeys.
-- Not for any web store; not for 1Password 7/8 or account-based vaults.
+- Not for any web store; not for 1Password 8. Verified only with standalone (local / Dropbox) vaults; 1Password.com account vaults are untested.
   See [`docs/`](docs/) for the full design.
 
 ## Changelog
