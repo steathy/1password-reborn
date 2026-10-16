@@ -3,9 +3,12 @@
   artifacts in dist\. Run this only when you change something under src\.
 
   Outputs:
-    dist\onepassword-mv3.crx  - the signed extension (committed; install.ps1 uses it)
+    dist\1password-reborn.crx - the signed extension (committed; install.ps1 uses it)
     dist\extension.json       - { id, version } (committed; install.ps1 reads it)
     build\key.pem             - signing key (gitignored; KEEP - it fixes the ID)
+  The staged copy that gets signed also receives "update_url" (built from -Owner/-Repo/
+  -Branch), so force-installed copies check GitHub for updates; src\manifest.json never
+  carries it (Load unpacked keeps the dev key and needs no update URL).
 
   Installation is a separate one-click step: ..\install.ps1 (or install.bat).
 
@@ -23,7 +26,7 @@ param(
   [string]$DistDir = "$PSScriptRoot\..\dist",
   # Where the crx will be served from (must match install.ps1). Change if you fork.
   [string]$Owner   = "steathy",
-  [string]$Repo    = "1password4-mv3",
+  [string]$Repo    = "1password-reborn",
   [string]$Branch  = "main"
 )
 $ErrorActionPreference = "Stop"
@@ -49,16 +52,17 @@ $DistDir   = (Resolve-Path $DistDir).Path
 $BuildDir  = $PSScriptRoot
 $staging   = Join-Path $BuildDir "staging"
 $keyPem    = Join-Path $BuildDir "key.pem"
-$crxOut    = Join-Path $DistDir "onepassword-mv3.crx"
+$crxOut    = Join-Path $DistDir "1password-reborn.crx"
 $version   = (Get-Content (Join-Path $SrcDir "manifest.json") -Raw | ConvertFrom-Json).version
+$updateUrl = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch/dist/updates.xml"   # must equal install.ps1's $UpdateUrl
 
 Write-Host "Chrome:  $chromeExe"
 Write-Host "Source:  $SrcDir  (v$version)"
 
-# 1. Stage src with the "key" stripped so the ID comes from our signing key.
+# 1. Stage src with the "key" stripped (the ID then comes from our signing key) and "update_url" added.
 if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
 Copy-Item -Recurse -Force $SrcDir $staging
-& node -e "const fs=require('fs');const p=process.argv[1];const m=JSON.parse(fs.readFileSync(p,'utf8'));delete m.key;fs.writeFileSync(p,JSON.stringify(m,null,2));" (Join-Path $staging "manifest.json")
+& node -e "const fs=require('fs');const p=process.argv[1];const m=JSON.parse(fs.readFileSync(p,'utf8'));delete m.key;m.update_url=process.argv[2];fs.writeFileSync(p,JSON.stringify(m,null,2));" (Join-Path $staging "manifest.json") $updateUrl
 
 # 2. Pack (generate key.pem on first run, reuse thereafter).
 $packedCrx = "$staging.crx"; $packedPem = "$staging.pem"
@@ -80,7 +84,7 @@ $id = (& node (Join-Path $BuildDir "compute-id.js") $keyPem "--id-only").Trim()
 Write-Host "Ext ID:  $id  ->  dist\extension.json"
 
 # 4. Update manifest served over https from GitHub (Chrome force-installs from it).
-$crxUrl = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch/dist/onepassword-mv3.crx"
+$crxUrl = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch/dist/1password-reborn.crx"
 @"
 <?xml version='1.0' encoding='UTF-8'?>
 <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
