@@ -1,34 +1,39 @@
 <#
-  install.ps1 - One-command installer for the 1Password 4 MV3 port (Chrome, Windows).
+  install.ps1 - One-command installer for 1Password Reborn (Chrome, Windows).
 
   Run it either way:
     * One command (no clone needed):
-        irm https://raw.githubusercontent.com/YOUR_GH_USER/1password4-mv3/main/install.ps1 | iex
+        irm https://raw.githubusercontent.com/YOUR_GH_USER/1password-reborn/main/install.ps1 | iex
     * From a local clone: double-click install.bat, or right-click -> Run with PowerShell.
 
   It shows a menu:
-    [1] Force install  - policy install; no dev-mode nag, can't be user-disabled (needs admin)
-    [2] Load unpacked  - no admin; stages files and you click 'Load unpacked' once
+    [1] Load unpacked  - no admin; stages files and you click 'Load unpacked' once
+    [2] Force install  - policy install; no dev-mode nag, can't be user-disabled (needs admin)
     [3] Uninstall      - remove the force-install policy
 
-  When run via irm|iex it downloads this repo's zip to %LOCALAPPDATA%\1Password4-MV3
+  When run via irm|iex it downloads this repo's zip to %LOCALAPPDATA%\1Password-Reborn
   and installs from there. Review this script before running it - irm|iex executes
   remote code.
+
+  Tests: tests/policy.test.js dot-sources this file with -FunctionsOnly (functions and
+  variables only; no window, no menu).
 #>
 param(
   [ValidateSet('', 'force', 'unpacked', 'uninstall')]
   [string]$Mode = '',
-  [string]$PayloadRoot = ''   # internal: set when self-elevating to an already-staged path
+  [string]$PayloadRoot = '',  # internal: set when self-elevating to an already-staged path
+  [switch]$FunctionsOnly      # internal: define the functions and return (tests dot-source this file)
 )
 $ErrorActionPreference = 'Stop'
 
 # ===== Published GitHub repo (change if you fork) =====
 $Owner  = 'steathy'
-$Repo   = '1password4-mv3'
+$Repo   = '1password-reborn'
 $Branch = 'main'
 # ======================================================
 
-$InstallDir = Join-Path $env:LOCALAPPDATA '1Password4-MV3'
+$InstallDir    = Join-Path $env:LOCALAPPDATA '1Password-Reborn'
+$OldInstallDir = Join-Path $env:LOCALAPPDATA '1Password4-MV3'   # staged by the 1password4-mv3 installer; see the migration prompts
 $RawBase    = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch"
 # Force-install fetches this manifest (and the crx it points to) over https from
 # GitHub. NOTE: Chrome only honors off-Web-Store force-install on ENTERPRISE-MANAGED
@@ -41,7 +46,7 @@ $UpdateUrl  = "$RawBase/dist/updates.xml"
 # `irm | iex`. Re-entry is guarded by OP4_WIN=1; the self-elevation path already
 # opens its own window and passes -Mode, so it does not double up here. No -NoExit:
 # the menu loops until the user picks [0] Quit, and then the window closes.
-if (-not $Mode -and $env:OP4_WIN -ne '1') {
+if (-not $Mode -and -not $FunctionsOnly -and $env:OP4_WIN -ne '1') {
   $reenter = if ($PSCommandPath) {
     "& '" + ($PSCommandPath -replace "'", "''") + "'"
   } else {
@@ -170,7 +175,7 @@ function Restart-Agent {
   Write-Host "Restarted 1Password + agent - reopen 1Password 4 and UNLOCK it." -ForegroundColor Cyan
 }
 function Test-Payload($root) {
-  $root -and (Test-Path (Join-Path $root 'dist\onepassword-mv3.crx')) `
+  $root -and (Test-Path (Join-Path $root 'dist\1password-reborn.crx')) `
         -and (Test-Path (Join-Path $root 'dist\extension.json'))
 }
 function Get-RemoteSha {
@@ -386,7 +391,7 @@ function Install-Unpacked($payload) {
 
   Write-Host ''
   Write-Mid 'Done! Open the toolbar button; on a saved site it should fill.' 'Cyan'
-  Write-Mid "If it doesn't fill yet, unlock 1Password 4 and restart the browser." 'Gray'
+  Write-Mid "If it doesn't fill yet, unlock the 1Password app and restart the browser." 'Gray'
 }
 function Uninstall-Force($payload) {
   if (-not (Test-Admin)) { Invoke-Elevated $payload 'uninstall'; return }
@@ -408,6 +413,9 @@ function Uninstall-Force($payload) {
   Write-Mid 'Force-install policy removed.' 'Green'
 }
 
+# Tests dot-source this file with -FunctionsOnly to get the functions and variables above and nothing else.
+if ($FunctionsOnly) { return }
+
 # ---- main ----
 [Net.ServicePointManager]::SecurityProtocol = `
   [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -415,7 +423,7 @@ Set-ConsoleFont
 
 # Elevated / non-interactive single action (set by -Mode when self-elevating).
 if ($Mode) {
-  try { $Host.UI.RawUI.WindowTitle = '1Password 4 Legacy Ext - MV3 Port' } catch {}
+  try { $Host.UI.RawUI.WindowTitle = '1Password Reborn' } catch {}
   $payload = Get-Payload
   switch ($Mode) {
     'force'     { Install-Force     $payload }
@@ -428,7 +436,7 @@ if ($Mode) {
 }
 
 # Interactive: dedicated-window menu that loops until [0] Quit.
-try { $Host.UI.RawUI.WindowTitle = '1Password 4 Legacy Ext - MV3 Port' } catch {}
+try { $Host.UI.RawUI.WindowTitle = '1Password Reborn' } catch {}
 try {
   $payload = Get-Payload
 } catch {
@@ -442,7 +450,7 @@ while ($true) {
   Clear-Host
   $inner = 60
   $bar   = '+' + ('=' * $inner) + '+'
-  $title = '1Password 4 Legacy Ext - MV3 Port'
+  $title = '1Password Reborn'
   $tp    = $inner - $title.Length; $lp = [int]($tp / 2); $rp = $tp - $lp
   Write-Host ''
   Write-Mid $bar 'Cyan'
