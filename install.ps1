@@ -329,6 +329,31 @@ function Remove-OverrideUpdateUrl {
   return $out
 }
 
+# ---- Switching from the 1password4-mv3 install folder --------------------------
+function Test-OldInstall($payload) {
+  # The 1password4-mv3 installer staged %LOCALAPPDATA%\1Password4-MV3. The migration
+  # prompts apply only when that folder exists and is not the folder we run from.
+  if (-not (Test-Path $OldInstallDir)) { return $false }
+  $old = (Resolve-Path $OldInstallDir).Path.TrimEnd('\')
+  $cur = (Resolve-Path $payload).Path.TrimEnd('\')
+  return ($old -ne $cur)
+}
+function Invoke-OldFolderPrompt {
+  # Several browsers and profiles can load the same old folder; switching one does not
+  # switch the others. Default No; only 'y' deletes.
+  if (-not (Test-Path $OldInstallDir)) { return }
+  Write-Host ''
+  Write-Mid ('The old folder ' + $OldInstallDir + ' may still be loaded by another browser or profile.') 'Yellow'
+  Write-Mid 'Delete it only after every browser and profile that loaded it has switched.' 'Yellow'
+  $ans = (Read-Host ((' ' * (Get-Margin)) + 'Delete it now? [y/N]')).Trim().ToLower()
+  if ($ans -eq 'y') {
+    Remove-Item -Recurse -Force $OldInstallDir
+    Write-Mid ('Deleted ' + $OldInstallDir) 'Green'
+  } else {
+    Write-Mid ('Kept. Delete it later: ' + $OldInstallDir) 'Gray'
+  }
+}
+
 function Install-Force($payload) {
   $extId = (Get-Content (Join-Path $payload 'dist\extension.json') -Raw | ConvertFrom-Json).id
   if (-not (Test-Admin)) {
@@ -399,10 +424,14 @@ function Install-Force($payload) {
   Write-Host ''
   Write-Mid "chrome://extensions should show 'Installed by policy'." 'Gray'
   Write-Mid 'If not: chrome://policy -> Reload policies, then restart Chrome.' 'Gray'
+  if (Test-OldInstall $payload) { Invoke-OldFolderPrompt }
 }
 function Install-Unpacked($payload) {
   $src = Join-Path $payload 'src'
   if (-not (Test-Path $src)) { throw "Missing $src." }
+  $migrate = Test-OldInstall $payload
+  $total   = if ($migrate) { 6 } else { 5 }   # one extra step: remove the old extension
+  $n       = 0
   # First-run fix: let 1Password 4 accept modern Chrome (see Set-VerifyCodeSignatureOff).
   if (Set-VerifyCodeSignatureOff) { Restart-Agent }
 
@@ -427,9 +456,9 @@ function Install-Unpacked($payload) {
     @{ Key = '6'; Name = 'Other';   Url = '';                     Proc = ''; Paths = @() }
   )
 
-  # ---- Step 1 of 5: pick a browser ----
+  # ---- Step: pick a browser ----
   Clear-Host
-  Write-Mid '=== Load unpacked  -  step 1 of 5 ===' 'Cyan'
+  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
   Write-Host ''
   Write-Mid 'Which browser are you installing into?' 'White'
   Write-Host ''
@@ -439,9 +468,9 @@ function Install-Unpacked($payload) {
   $browser = $browsers | Where-Object { $_.Key -eq $sel } | Select-Object -First 1
   if (-not $browser) { $browser = $browsers[-1] }   # anything else -> Other
 
-  # ---- Step 2 of 5: open the extensions page (URL to clipboard) ----
+  # ---- Step: open the extensions page (URL to clipboard) ----
   Clear-Host
-  Write-Mid '=== Load unpacked  -  step 2 of 5 ===' 'Cyan'
+  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
   Write-Host ''
   Write-Mid ('Open the extensions page in ' + $browser.Name) 'White'
   Write-Host ''
@@ -457,9 +486,22 @@ function Install-Unpacked($payload) {
   Write-Host ''
   Read-Host ((' ' * (Get-Margin)) + 'Press Enter (or y) when the page is open') | Out-Null
 
-  # ---- Step 3 of 5: developer mode ----
+  # ---- Step (switching from 1password4-mv3 only): remove the old extension ----
+  if ($migrate) {
+    Clear-Host
+    $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
+    Write-Host ''
+    Write-Mid 'Remove the old extension' 'White'
+    Write-Host ''
+    Write-Mid 'Its card still says "1Password extension (desktop app required)".' 'Gray'
+    Write-Mid 'Click Remove on that card.' 'Gray'
+    Write-Host ''
+    Read-Host ((' ' * (Get-Margin)) + 'Press Enter (or y) when it is removed') | Out-Null
+  }
+
+  # ---- Step: developer mode ----
   Clear-Host
-  Write-Mid '=== Load unpacked  -  step 3 of 5 ===' 'Cyan'
+  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
   Write-Host ''
   Write-Mid 'Turn ON "Developer mode"' 'White'
   Write-Host ''
@@ -468,10 +510,10 @@ function Install-Unpacked($payload) {
   Write-Host ''
   Read-Host ((' ' * (Get-Margin)) + 'Press Enter (or y) when Developer mode is on') | Out-Null
 
-  # ---- Step 4 of 5: Load unpacked, paste the folder ----
+  # ---- Step: Load unpacked, paste the folder ----
   try { Set-Clipboard -Value $src } catch {}
   Clear-Host
-  Write-Mid '=== Load unpacked  -  step 4 of 5 ===' 'Cyan'
+  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
   Write-Host ''
   Write-Mid 'Click "Load unpacked", then paste the folder' 'White'
   Write-Host ''
@@ -479,12 +521,14 @@ function Install-Unpacked($payload) {
   Write-Host ''
   Write-Mid 'In the folder picker, press Ctrl+V then Enter.' 'Gray'
   Write-Mid 'Keep that folder in place - the browser reloads it each launch.' 'Gray'
+  if ($migrate) { Write-Mid 'If the 1Password app asks to pair again, approve it.' 'Gray' }
   Write-Host ''
   Read-Host ((' ' * (Get-Margin)) + 'Press Enter (or y) when the extension has loaded') | Out-Null
+  if ($migrate) { Invoke-OldFolderPrompt }
 
-  # ---- Step 5 of 5: restart the browser (auto or manual) ----
+  # ---- Step: restart the browser (auto or manual) ----
   Clear-Host
-  Write-Mid '=== Load unpacked  -  step 5 of 5 ===' 'Cyan'
+  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
   Write-Host ''
   Write-Mid 'Restart your browser to finish first-time pairing' 'White'
   Write-Host ''
@@ -555,6 +599,20 @@ function Uninstall-Force($payload) {
   Restart-Chrome
   Write-Host ''
   Write-Mid 'Force-install policy removed.' 'Green'
+  if (Test-OldInstall $payload) {
+    $dirs = @($InstallDir, $OldInstallDir) | Where-Object { Test-Path $_ }
+    if ($dirs) {
+      Write-Host ''
+      Write-Mid ('Also delete the staged folders (' + ($dirs -join ', ') + ')?') 'Yellow'
+      Write-Mid 'A load-unpacked extension stops working.' 'Yellow'
+      $ans = (Read-Host ((' ' * (Get-Margin)) + '[y/N]')).Trim().ToLower()
+      if ($ans -eq 'y') {
+        foreach ($d in $dirs) { Remove-Item -Recurse -Force $d; Write-Mid ('Deleted ' + $d) 'Green' }
+      } else {
+        Write-Mid 'Kept.' 'Gray'
+      }
+    }
+  }
 }
 
 # Tests dot-source this file with -FunctionsOnly to get the functions and variables above and nothing else.
