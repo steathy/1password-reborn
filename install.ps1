@@ -237,6 +237,98 @@ function Invoke-Elevated($payload, $modeName) {
     "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -Mode $modeName -PayloadRoot `"$payload`""
 }
 
+# ---- ExtensionSettings policy (pure; tested by tests/policy.test.js) ------------
+# Chrome applies ExtensionInstallForcelist first (mode force_installed, update URL from
+# the forcelist entry), then parses each per-ID ExtensionSettings entry on top. An
+# entry's own installation_mode replaces the forced mode, and only then is its
+# update_url read (an update_url in an entry without installation_mode is ignored).
+# override_update_url makes later update checks use the policy URL instead of the
+# manifest's, for force_installed/normal_installed with a non-Web-Store URL.
+# Both functions take the REG_SZ JSON text ('' = no value) and never touch the registry.
+# Chrome matches key names case-sensitively, PowerShell does not: look properties up by exact name.
+function Get-ExactProperty($obj, [string]$Name) {
+  return ($obj.PSObject.Properties | Where-Object { $_.Name -ceq $Name } | Select-Object -First 1)
+}
+function Merge-OverrideUpdateUrl {
+  # Result: migrated  - Json is the new value to write (this ID now carries
+  #                     override_update_url: true; every other key and ID is kept)
+  #         conflict  - another policy routes this ID (installation_mode present and not
+  #                     force_installed/normal_installed with a string update_url equal to
+  #                     $UpdateUrl; a non-string mode or update_url is a conflict too), or a
+  #                     key other than exactly $ExtId names it: Chrome also accepts a
+  #                     comma-separated list of IDs as a key, so any such key (or the ID in
+  #                     another letter case) is conservatively a conflict;
+  #                     Json is the input, unchanged; Mode/UpdateUrl are its values
+  #         invalid   - the value, or this ID's entry, is not a JSON object; Json unchanged
+  param([string]$Json = '', [Parameter(Mandatory)][string]$ExtId, [Parameter(Mandatory)][string]$UpdateUrl)
+  $out = [pscustomobject]@{ Result = ''; Json = $Json; Mode = $null; UpdateUrl = $null }
+  if ($Json -eq '') {
+    $root = [pscustomobject]@{}
+  } else {
+    try { $root = ConvertFrom-Json -InputObject $Json } catch { $root = $null }
+    if ($root -isnot [System.Management.Automation.PSCustomObject]) { $out.Result = 'invalid'; return $out }
+  }
+  foreach ($p in @($root.PSObject.Properties)) {
+    $k = $p.Name
+    if ($k -ceq '*' -or $k.StartsWith('update_url:', [System.StringComparison]::Ordinal) -or $k -ceq $ExtId) { continue }
+    $names = @($k.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    if (-not ($names | Where-Object { $_ -ieq $ExtId })) { continue }
+    if ($p.Value -is [System.Management.Automation.PSCustomObject]) {
+      $m = Get-ExactProperty $p.Value 'installation_mode'
+      $u = Get-ExactProperty $p.Value 'update_url'
+      if ($null -ne $m) { $out.Mode = $m.Value }
+      if ($null -ne $u) { $out.UpdateUrl = $u.Value }
+    }
+    $out.Result = 'conflict'
+    return $out
+  }
+  $prop = Get-ExactProperty $root $ExtId
+  if ($null -eq $prop) {
+    $root | Add-Member -NotePropertyName $ExtId -NotePropertyValue ([pscustomobject]@{ override_update_url = $true })
+  } else {
+    $entry = $prop.Value
+    if ($entry -isnot [System.Management.Automation.PSCustomObject]) { $out.Result = 'invalid'; return $out }
+    $modeProp = Get-ExactProperty $entry 'installation_mode'
+    if ($null -ne $modeProp) {
+      $urlProp = Get-ExactProperty $entry 'update_url'
+      $out.Mode = $modeProp.Value
+      if ($null -ne $urlProp) { $out.UpdateUrl = $urlProp.Value }
+      # Chrome reads both fields with GetString, so only string values can be the route we
+      # claim to have switched. No casting: [string]@('x') would pass as 'x' (review R1-1).
+      $routed  = ($modeProp.Value -is [string]) -and ($modeProp.Value -ceq 'force_installed' -or $modeProp.Value -ceq 'normal_installed')
+      $sameUrl = ($null -ne $urlProp) -and ($urlProp.Value -is [string]) -and ($urlProp.Value -ceq $UpdateUrl)
+      if (-not ($routed -and $sameUrl)) { $out.Result = 'conflict'; return $out }
+    }
+    $entry | Add-Member -NotePropertyName 'override_update_url' -NotePropertyValue $true -Force
+  }
+  $out.Json   = ConvertTo-Json -InputObject $root -Compress -Depth 32
+  $out.Result = 'migrated'
+  return $out
+}
+function Remove-OverrideUpdateUrl {
+  # Result: removed  - override_update_url removed from this ID's entry; the entry is dropped
+  #                    if empty; Json is the new value, or $null when no IDs remain (delete the value)
+  #         absent   - no value, no entry for this ID, or no override_update_url in it; Json unchanged
+  #         foreign  - the entry has installation_mode (another policy's); Json unchanged
+  #         invalid  - the value is not a JSON object; Json unchanged
+  param([string]$Json = '', [Parameter(Mandatory)][string]$ExtId)
+  $out = [pscustomobject]@{ Result = ''; Json = $Json }
+  if ($Json -eq '') { $out.Result = 'absent'; return $out }
+  try { $root = ConvertFrom-Json -InputObject $Json } catch { $root = $null }
+  if ($root -isnot [System.Management.Automation.PSCustomObject]) { $out.Result = 'invalid'; return $out }
+  # Only the exact key (case-sensitive) is ours; comma-listed or other-case keys are never touched.
+  $prop = Get-ExactProperty $root $ExtId
+  if ($null -eq $prop -or $prop.Value -isnot [System.Management.Automation.PSCustomObject]) { $out.Result = 'absent'; return $out }
+  $entry = $prop.Value
+  if ($null -ne (Get-ExactProperty $entry 'installation_mode')) { $out.Result = 'foreign'; return $out }
+  if ($null -eq (Get-ExactProperty $entry 'override_update_url')) { $out.Result = 'absent'; return $out }
+  $entry.PSObject.Properties.Remove('override_update_url')
+  if (@($entry.PSObject.Properties).Count -eq 0) { $root.PSObject.Properties.Remove($ExtId) }
+  if (@($root.PSObject.Properties).Count -eq 0) { $out.Json = $null } else { $out.Json = ConvertTo-Json -InputObject $root -Compress -Depth 32 }
+  $out.Result = 'removed'
+  return $out
+}
+
 function Install-Force($payload) {
   $extId = (Get-Content (Join-Path $payload 'dist\extension.json') -Raw | ConvertFrom-Json).id
   if (-not (Test-Admin)) {
