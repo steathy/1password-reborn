@@ -330,6 +330,9 @@ function Remove-OverrideUpdateUrl {
 }
 
 # ---- Switching from the 1password4-mv3 install folder --------------------------
+# When Force install or Uninstall runs elevated under a different admin account,
+# $env:LOCALAPPDATA (and so $InstallDir / $OldInstallDir) is that account's, so the
+# folder prompts see that profile (usually nothing to offer).
 function Test-OldInstall($payload) {
   # The 1password4-mv3 installer staged %LOCALAPPDATA%\1Password4-MV3. The migration
   # prompts apply only when that folder exists and is not the folder we run from.
@@ -343,12 +346,17 @@ function Invoke-OldFolderPrompt {
   # switch the others. Default No; only 'y' deletes.
   if (-not (Test-Path $OldInstallDir)) { return }
   Write-Host ''
-  Write-Mid ('The old folder ' + $OldInstallDir + ' may still be loaded by another browser or profile.') 'Yellow'
+  Write-Mid ('The old folder ' + $OldInstallDir) 'Yellow'
+  Write-Mid 'may still be loaded by another browser or profile.' 'Yellow'
   Write-Mid 'Delete it only after every browser and profile that loaded it has switched.' 'Yellow'
   $ans = (Read-Host ((' ' * (Get-Margin)) + 'Delete it now? [y/N]')).Trim().ToLower()
   if ($ans -eq 'y') {
-    Remove-Item -Recurse -Force $OldInstallDir
-    Write-Mid ('Deleted ' + $OldInstallDir) 'Green'
+    try {
+      Remove-Item -Recurse -Force $OldInstallDir
+      Write-Mid ('Deleted ' + $OldInstallDir) 'Green'
+    } catch {
+      Write-Mid ('Could not delete ' + $OldInstallDir + ': ' + $_.Exception.Message) 'Red'
+    }
   } else {
     Write-Mid ('Kept. Delete it later: ' + $OldInstallDir) 'Gray'
   }
@@ -388,10 +396,16 @@ function Install-Force($payload) {
   # manifest's update_url (none before 1.4.0, so they went to the Web Store and never
   # found us). A per-ID override_update_url in ExtensionSettings makes them follow the
   # policy URL above instead. Merge-OverrideUpdateUrl decides whether that is safe here.
+  # Chrome also reads ExtensionSettings as a registry key tree and prefers it over the
+  # JSON value, so that form is checked first: a value we wrote would be ignored.
   $settingsKey = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
-  $raw = $null
-  try { $raw = (Get-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -ErrorAction Stop).ExtensionSettings } catch {}
-  $route = Merge-OverrideUpdateUrl -Json ([string]$raw) -ExtId $extId -UpdateUrl $UpdateUrl
+  if (Test-Path (Join-Path $settingsKey 'ExtensionSettings')) {
+    $route = [pscustomobject]@{ Result = 'registry-key'; Json = $null; Mode = $null; UpdateUrl = $null }
+  } else {
+    $raw = $null
+    try { $raw = (Get-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -ErrorAction Stop).ExtensionSettings } catch {}
+    $route = Merge-OverrideUpdateUrl -Json ([string]$raw) -ExtId $extId -UpdateUrl $UpdateUrl
+  }
   if ($route.Result -eq 'migrated') {
     Set-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -Value $route.Json -Type String
   }
@@ -416,8 +430,15 @@ function Install-Force($payload) {
       Write-Mid 'or remove the entry, then run Force install again.' 'Gray'
     }
     'invalid' {
-      Write-Mid 'Update route NOT switched: the ExtensionSettings policy value is not' 'Yellow'
-      Write-Mid 'valid JSON. It was left unchanged; fix it, then run Force install again.' 'Yellow'
+      Write-Mid 'Update route NOT switched: the ExtensionSettings value is not' 'Yellow'
+      Write-Mid 'a JSON object, or its entry for this extension is not one.' 'Yellow'
+      Write-Mid 'It was left unchanged; fix it, then run Force install again.' 'Yellow'
+    }
+    'registry-key' {
+      Write-Mid 'Update route NOT switched: ExtensionSettings is set as a' 'Yellow'
+      Write-Mid 'registry key, which Chrome reads instead of the JSON value,' 'Yellow'
+      Write-Mid 'so the migration was not applied. Add override_update_url' 'Yellow'
+      Write-Mid 'for this extension there, then run Force install again.' 'Gray'
     }
   }
   Restart-Chrome
@@ -593,8 +614,15 @@ function Uninstall-Force($payload) {
         Write-Mid 'Removed override_update_url from ExtensionSettings.' 'Gray'
       }
     }
-    'foreign' { Write-Mid 'The ExtensionSettings entry for this extension belongs to another policy; left unchanged.' 'Gray' }
-    'invalid' { Write-Mid 'ExtensionSettings is not valid JSON; left unchanged.' 'Yellow' }
+    'foreign' {
+      Write-Mid 'The ExtensionSettings entry for this extension belongs to' 'Gray'
+      Write-Mid 'another policy; left unchanged.' 'Gray'
+    }
+    'invalid' { Write-Mid 'ExtensionSettings is not a JSON object; left unchanged.' 'Yellow' }
+  }
+  if (Test-Path (Join-Path $settingsKey 'ExtensionSettings')) {
+    Write-Mid 'ExtensionSettings is also set as a registry key; that key' 'Gray'
+    Write-Mid 'belongs to another policy and was left unchanged.' 'Gray'
   }
   Restart-Chrome
   Write-Host ''
@@ -603,11 +631,19 @@ function Uninstall-Force($payload) {
     $dirs = @($InstallDir, $OldInstallDir) | Where-Object { Test-Path $_ }
     if ($dirs) {
       Write-Host ''
-      Write-Mid ('Also delete the staged folders (' + ($dirs -join ', ') + ')?') 'Yellow'
+      Write-Mid 'Also delete the staged folders?' 'Yellow'
+      foreach ($d in $dirs) { Write-Mid ('  ' + $d) 'Yellow' }
       Write-Mid 'A load-unpacked extension stops working.' 'Yellow'
       $ans = (Read-Host ((' ' * (Get-Margin)) + '[y/N]')).Trim().ToLower()
       if ($ans -eq 'y') {
-        foreach ($d in $dirs) { Remove-Item -Recurse -Force $d; Write-Mid ('Deleted ' + $d) 'Green' }
+        foreach ($d in $dirs) {
+          try {
+            Remove-Item -Recurse -Force $d
+            Write-Mid ('Deleted ' + $d) 'Green'
+          } catch {
+            Write-Mid ('Could not delete ' + $d + ': ' + $_.Exception.Message) 'Red'
+          }
+        }
       } else {
         Write-Mid 'Kept.' 'Gray'
       }
