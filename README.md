@@ -76,12 +76,14 @@ It downloads this repo, then shows a menu:
 Reborn is the same extension under a new name, with the same two extension IDs, so your
 pairing and your vault are untouched. Only the folder and the update route change.
 
-- **Load unpacked:** re-run the installer (the one-liner above, or `install.bat`) and choose
-  **Load unpacked**. When it finds the old `%LOCALAPPDATA%\1Password4-MV3` folder it adds a
-  step to remove the old extension and asks about the old folder at the end. By hand: on
-  the extensions page, **Remove** the card that still says *1Password extension (desktop
-  app required)*, then **Load unpacked** the new folder, and approve pairing if the
-  1Password app asks.
+- **Load unpacked:** re-run the installer (the one-liner above, or `install.bat` in a
+  fresh clone) and choose **Load unpacked**. When it finds the old
+  `%LOCALAPPDATA%\1Password4-MV3` folder it adds a step to remove the old extension and
+  asks about the old folder at the end. By hand: on the extensions page, **Remove** the
+  card that still says *1Password extension (desktop app required)*, then **Load
+  unpacked** the new folder, and approve pairing if the 1Password app asks. Do not run
+  the `install.bat` inside the old `%LOCALAPPDATA%\1Password4-MV3` folder: it is the old
+  installer and reinstalls 1password4-mv3.
 - **Delete the old folder only after every browser and profile that loaded it has
   switched.** Several browsers can load the same folder, and switching one does not
   switch the others; the installer's prompt defaults to keeping it.
@@ -89,11 +91,14 @@ pairing and your vault are untouched. Only the folder and the update route chang
   `ExtensionInstallForcelist` entry at the new update URL and sets a per-ID
   `override_update_url` in `ExtensionSettings`, so the installed copy updates in place on
   the browser's next update check. This is designed from Chrome's policy documentation and
-  source and has not been tested on a managed device. If another policy already routes the
-  extension (its `ExtensionSettings` entry has an `installation_mode`), the installer says
-  so, changes nothing there, and tells you which `update_url` to change. Force installs
-  made before 1.4.0 never received updates from GitHub: the crx had no `update_url` and
-  no override was set.
+  source and has not been tested on a managed device. On a device whose Chrome policies
+  come from Group Policy, a policy refresh may rewrite these values, so the override may
+  not persist; set it in that policy instead. If another policy already routes the
+  extension (its `ExtensionSettings` entry has an `installation_mode`, another key names
+  it, such as a comma-separated list of IDs, or `ExtensionSettings` is set as a registry
+  key rather than a JSON value), the installer says so, changes nothing there, and tells
+  you what to change. Force installs made before 1.4.0 never received updates from
+  GitHub: the crx had no `update_url` and no override was set.
 
 ## Load unpacked by hand (no installer)
 
@@ -307,7 +312,7 @@ src/                    the loadable / packable MV3 extension
   assets/               icons
 build/                  pack.ps1 + compute-id.js (rebuild the crx; key.pem gitignored)
 tools/                  1pif-to-bitwarden.js (migrate passkeys to Bitwarden)
-tests/                  node --test suites for the pure passkey modules
+tests/                  node --test suites: pure passkey modules + installer policy (PowerShell)
 dist/                   committed install artifacts: signed crx + extension.json + updates.xml
 original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)

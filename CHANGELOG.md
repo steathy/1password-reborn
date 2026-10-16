@@ -41,7 +41,8 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
   refuses to overwrite its input file) into a Bitwarden JSON import that
   restores the passkeys.
 - `npm test` (Node ^22.22.2 || ^24.15.0 || >=26.0.0, what jsdom requires): unit suites for the crypto core, request state machine, shim
-  rules, card trust boundary, fill-script stripping and the converter.
+  rules, card trust boundary, fill-script stripping and the converter, plus the installer's
+  ExtensionSettings policy functions (run in Windows PowerShell 5.1).
 
 ### Known issues
 - The 1Password 4 app shows the stored passkey as the item's password (desktop and
