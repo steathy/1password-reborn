@@ -249,6 +249,25 @@ function Show-OldInstallNotice($payload) {
   Write-Host ''
 }
 
+function Show-OP7EdgeWarning {
+  # 1Password 7 before 7.4.767 has no Microsoft in its browser signer list and refuses Edge
+  # (7.4 added Windows signature verification plus Microsoft). 1Password 7 has no
+  # VerifyCodeSignature switch; updating it is the only fix. See BROWSERS.md.
+  $ver = $null
+  foreach ($k in @(
+      'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\1Password',
+      'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\1Password',
+      'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\1Password')) {
+    try { $dv = (Get-ItemProperty -Path $k -Name 'DisplayVersion' -ErrorAction Stop).DisplayVersion } catch { $dv = $null }
+    if ($dv) { try { $ver = [version]$dv } catch { $ver = $null }; if ($ver) { break } }
+  }
+  if ($null -eq $ver -or $ver.Major -ne 7 -or $ver -ge [version]'7.4.767') { return }
+  Write-Host ''
+  Write-Mid ('1Password 7 ' + $ver + ' refuses Microsoft Edge.') 'Yellow'
+  Write-Mid 'For Edge, update 1Password 7 to 7.4.767 or later, or use Chrome.' 'Gray'
+  Write-Host ''
+}
+
 function Install-Force($payload) {
   $extId = (Get-Content (Join-Path $payload 'dist\extension.json') -Raw | ConvertFrom-Json).id
   if (-not (Test-Admin)) {
@@ -292,6 +311,7 @@ function Install-Unpacked($payload) {
   if (-not (Test-Path $src)) { throw "Missing $src." }
   # First-run fix: let 1Password 4 accept modern Chrome (see Set-VerifyCodeSignatureOff).
   if (Set-VerifyCodeSignatureOff) { Restart-Agent }
+  Show-OP7EdgeWarning
 
   # Browser table: extensions URL to clipboard (step 1) + process/paths for the
   # optional auto-restart (step 4).

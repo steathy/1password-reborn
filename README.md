@@ -26,11 +26,15 @@ original used — native messaging (`2bua8c4s2c.com.agilebits.1password`) and a
 > verified is listed per app):
 > - **1Password 4 for Windows** (4.6.1.618, Windows 10): verified, including passkeys, in
 >   Chrome and Edge.
-> - **1Password 7 for Windows** (7.3.657): passwords and passkeys work in Chrome (fresh-VM
->   test); 7.3.657 refuses current Edge ("untrusted publisher": Edge is now signed with a
->   certificate it predates). Early use, not yet long-term tested.
+> - **1Password 7 for Windows**: passwords and passkeys work in Chrome (verified on 7.3.657,
+>   fresh VM). 7.3.657 **refuses Edge** — its built-in browser signer list predates the
+>   Chromium Edge and has no Microsoft entry; 1Password 7.4 added it, so **Edge works from
+>   7.4.767 or later** (verified). 1Password 7 has no code-signature switch; update it or use
+>   Chrome. Early use, not yet long-term tested.
 > - **1Password 6**: untested.
-> - Other Chromium browsers should work but are unverified — reports welcome.
+> - Which browsers each app version pairs with — and why Chromium forks such as SRWare Iron,
+>   Maxthon or Yandex may be refused — is in [`BROWSERS.md`](BROWSERS.md). It is the browser's
+>   code-signing publisher that is checked, not the engine.
 
 ## Install (one command)
 
@@ -129,12 +133,13 @@ machines that have **never paired a browser before**.
 
 Cause (found by reverse-engineering `Agile1pAgent.exe`): the 1Password 4 desktop
 agent verifies the connecting browser's **Authenticode signer name** against a
-hardcoded allow-list — `Google Inc`, `Microsoft Corporation`, `Vivaldi
-Technologies AS`. Google renamed its code-signing certificate to **`Google LLC`**
+hardcoded allow-list (`Google Inc`, `Microsoft Corporation`, `Vivaldi Technologies AS`,
+and more — see [`BROWSERS.md`](BROWSERS.md)). Google renamed its code-signing certificate
+to **`Google LLC`**
 around 2018, so modern Chrome no longer matches and the agent drops the connection
 without a word. Which browsers this hits depends on their signer: **Chrome** (now
-`Google LLC`) is blocked; **Edge** (`Microsoft Corporation`) and **Vivaldi** pass;
-other Chromium browsers (Brave, Arc, …) whose signer isn't on the list are blocked
+`Google LLC`) is blocked; **Edge** (`Microsoft Corporation`), **Vivaldi** and **Brave** pass;
+other Chromium forks (SRWare Iron, Arc, …) whose signer isn't on the list are blocked
 too. (It's also the real reason the legacy extension kept working in Edge/Vivaldi
 but not Chrome.) The check is controlled by a registry value:
 

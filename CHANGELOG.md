@@ -44,9 +44,9 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
   1Password 7 on iPhone). Do not copy or fill it; see README → Passkeys.
 - With two waiting requests, the app's popup may close on a tab switch; reopen it
   from the toolbar button.
-- 1Password 7.3.657 for Windows refuses current Edge builds ("untrusted publisher Microsoft
-  Corporation": Edge is now signed with a certificate it predates). With 1Password 7, use
-  Chrome.
+- 1Password 7 before 7.4.767 refuses Edge: its built-in browser signer list predates the
+  Chromium Edge and has no Microsoft entry (7.4 added it). Update 1Password 7 to 7.4.767 or
+  later for Edge, or use Chrome. See BROWSERS.md.
 
 ## [1.3.0] - 2026-07-18
 
