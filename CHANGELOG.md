@@ -11,15 +11,12 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
 - **Renamed to 1Password Reborn** (was `1password4-mv3`). The browser now shows
   "1Password Reborn (desktop app required)"; the repo is `steathy/1password-reborn`, the
   crx `dist/1password-reborn.crx`, the installer folder `%LOCALAPPDATA%\1Password-Reborn`.
-  Both extension IDs are unchanged. Existing installs: see README → Moving from
-  1password4-mv3; the installer guides the switch.
-- **Force installs get a real update route.** The signed crx now carries `update_url`, and
-  Force install sets a per-ID `override_update_url` in the `ExtensionSettings` policy next
-  to its `ExtensionInstallForcelist` entry, so a force-installed copy updates from GitHub
-  (earlier crx files had no `update_url`, so policy installs checked the Web Store and never
-  updated). When another policy already routes the extension the installer reports the
-  conflict and changes nothing there; Uninstall removes only the override it created.
-  Designed from Chrome's policy source; not tested on a managed device.
+  Both extension IDs are unchanged. Existing installs are not migrated: remove the old one
+  and install Reborn fresh (README → Moving from 1password4-mv3).
+- **Force installs get a real update route.** The signed crx now carries `update_url`, so a
+  force-installed 1.4.0 copy updates from GitHub (earlier crx files had none, so policy
+  installs checked the Web Store and never updated). An existing force install is
+  reinstalled: Uninstall, then Force install. Not tested on a managed device.
 - Manifest: `minimum_chrome_version` 111; two new content-script entries on `https://*/*`
   and `http://localhost/*`; bundled version bumped to **4.7.5.91** so force-installed
   copies pick up the update (the engine itself is still the untouched 4.7.5.90 build).
@@ -41,14 +38,16 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
   refuses to overwrite its input file) into a Bitwarden JSON import that
   restores the passkeys.
 - `npm test` (Node ^22.22.2 || ^24.15.0 || >=26.0.0, what jsdom requires): unit suites for the crypto core, request state machine, shim
-  rules, card trust boundary, fill-script stripping and the converter, plus the installer's
-  ExtensionSettings policy functions (run in Windows PowerShell 5.1).
+  rules, card trust boundary, fill-script stripping and the converter.
 
 ### Known issues
 - The 1Password 4 app shows the stored passkey as the item's password (desktop and
   1Password 7 on iPhone). Do not copy or fill it; see README → Passkeys.
 - With two waiting requests, the app's popup may close on a tab switch; reopen it
   from the toolbar button.
+- 1Password 7.3.657 for Windows refuses current Edge builds ("untrusted publisher Microsoft
+  Corporation": Edge is now signed with a certificate it predates). With 1Password 7, use
+  Chrome.
 
 ## [1.3.0] - 2026-07-18
 

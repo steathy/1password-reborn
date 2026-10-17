@@ -26,8 +26,9 @@ original used — native messaging (`2bua8c4s2c.com.agilebits.1password`) and a
 > verified is listed per app):
 > - **1Password 4 for Windows** (4.6.1.618, Windows 10): verified, including passkeys, in
 >   Chrome and Edge.
-> - **1Password 7 for Windows**: works for passwords; early use, not yet long-term tested;
->   passkeys untested.
+> - **1Password 7 for Windows** (7.3.657): passwords and passkeys work in Chrome (fresh-VM
+>   test); 7.3.657 refuses current Edge ("untrusted publisher": Edge is now signed with a
+>   certificate it predates). Early use, not yet long-term tested.
 > - **1Password 6**: untested.
 > - Other Chromium browsers should work but are unverified — reports welcome.
 
@@ -73,32 +74,23 @@ It downloads this repo, then shows a menu:
 
 ## Moving from 1password4-mv3
 
-Reborn is the same extension under a new name, with the same two extension IDs, so your
-pairing and your vault are untouched. Only the folder and the update route change.
+Reborn is the same extension under a new name, with the same two extension IDs, and your
+vault is untouched. It does not migrate an existing install: remove the old one, then
+install Reborn fresh.
 
-- **Load unpacked:** re-run the installer (the one-liner above, or `install.bat` in a
-  fresh clone) and choose **Load unpacked**. When it finds the old
-  `%LOCALAPPDATA%\1Password4-MV3` folder it adds a step to remove the old extension and
-  asks about the old folder at the end. By hand: on the extensions page, **Remove** the
-  card that still says *1Password extension (desktop app required)*, then **Load
-  unpacked** the new folder, and approve pairing if the 1Password app asks. Do not run
-  the `install.bat` inside the old `%LOCALAPPDATA%\1Password4-MV3` folder: it is the old
+- **Load unpacked:** on the extensions page, **Remove** the card that still says
+  *1Password extension (desktop app required)*. Then run the installer (the one-liner
+  above, or `install.bat` in a fresh clone) and choose **Load unpacked**, or load the new
+  `src` folder by hand. Approve pairing if the 1Password app asks. Do not run the
+  `install.bat` inside the old `%LOCALAPPDATA%\1Password4-MV3` folder: it is the old
   installer and reinstalls 1password4-mv3.
-- **Delete the old folder only after every browser and profile that loaded it has
-  switched.** Several browsers can load the same folder, and switching one does not
-  switch the others; the installer's prompt defaults to keeping it.
-- **Force install:** re-run the installer and choose **Force install**. It points the
-  `ExtensionInstallForcelist` entry at the new update URL and sets a per-ID
-  `override_update_url` in `ExtensionSettings`, so the installed copy updates in place on
-  the browser's next update check. This is designed from Chrome's policy documentation and
-  source and has not been tested on a managed device. On a device whose Chrome policies
-  come from Group Policy, a policy refresh may rewrite these values, so the override may
-  not persist; set it in that policy instead. If another policy already routes the
-  extension (its `ExtensionSettings` entry has an `installation_mode`, another key names
-  it, such as a comma-separated list of IDs, or `ExtensionSettings` is set as a registry
-  key rather than a JSON value), the installer says so, changes nothing there, and tells
-  you what to change. Force installs made before 1.4.0 never received updates from
-  GitHub: the crx had no `update_url` and no override was set.
+- **Force install:** run the installer's **Uninstall**, let the browser remove the
+  extension (`chrome://policy` → **Reload policies**, then restart the browser), then
+  choose **Force install**. Force installs made before 1.4.0 never received updates from
+  GitHub (the crx had no `update_url`); the 1.4.0 crx carries one, so a fresh force install
+  updates from GitHub. Not tested on a managed device.
+- **The old folder:** delete `%LOCALAPPDATA%\1Password4-MV3` by hand once no browser or
+  profile loads from it. The installer only points it out.
 
 ## Load unpacked by hand (no installer)
 
@@ -312,7 +304,7 @@ src/                    the loadable / packable MV3 extension
   assets/               icons
 build/                  pack.ps1 + compute-id.js (rebuild the crx; key.pem gitignored)
 tools/                  1pif-to-bitwarden.js (migrate passkeys to Bitwarden)
-tests/                  node --test suites: pure passkey modules + installer policy (PowerShell)
+tests/                  node --test suites for the pure passkey modules
 dist/                   committed install artifacts: signed crx + extension.json + updates.xml
 original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)
