@@ -31,8 +31,7 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
   confirmation, recovery menu for cancelled saves (on the toolbar icon's right-click menu only); sign-in reads the passkey from the
   app's fill script (1Password 4.6.1 never sends the raw item) and passkeys are stripped
   from every fill, so none is ever typed into a page. Saves go through the app's
-  manual-save path, with the card's title as the item title. See README → Passkeys and
-  docs/passkeys-design.md.
+  manual-save path, with the card's title as the item title. See README → Passkeys.
 - `tools/1pif-to-bitwarden.js` converts a 1Password 4 export (classic 1PIF or the
   OPVault-style JSON from 1Password 4.6 for Windows; trashed items are skipped, and it
   refuses to overwrite its input file) into a Bitwarden JSON import that
@@ -188,8 +187,7 @@ on 1Password 4.6.1.618 (Windows 10).
   refreshes `dist/`. Committed `dist/onepassword-mv3.crx` makes installs build-tool-free.
 - **`original/1Password-4.7.5.90.crx`**: the unmodified original MV2 extension, for
   reference and for use in browsers that still accept MV2.
-- Design notes in `docs/design.md`; `LICENSE` (MIT, for original work) and `NOTICE`
-  (third-party components).
+- `LICENSE` (MIT, for original work) and `NOTICE` (third-party components).
 
 ### Notes
 - Windows transport is WebSocket (`ws://127.0.0.1`); 1Password 4 ships no

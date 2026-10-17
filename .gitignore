@@ -15,3 +15,6 @@ Thumbs.db
 # npm (tests only; tldts is vendored into src/ext)
 node_modules/
 package-lock.json
+
+# Working docs (specs, plans, reviews, test log): local only, never committed
+docs/

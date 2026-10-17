@@ -172,7 +172,7 @@ does the same job with a dismissable startup bubble.
 
 No `allowed_origins` / native-messaging step is needed — on Windows the extension
 connects over `ws://127.0.0.1`, which authenticates by pairing secret, not by
-extension ID (see [`docs/design.md`](docs/design.md), Component 5).
+extension ID.
 
 **Uninstall:** menu option 3, or run [`uninstall.ps1`](uninstall.ps1).
 
@@ -211,8 +211,7 @@ domain 1Password retired, so the page is dead. That page only *displayed* a
 verification code; the code is never sent back to the app, and pairing completes
 with the same `authRegister {extId, secret}` message either way. So the bootstrap
 strips the `code` from the incoming `authNew` message, which makes the engine
-self-complete the pairing with no page. See [`docs/design.md`](docs/design.md)
-(Component 7) for the full trace.
+self-complete the pairing with no page.
 
 After a successful pair the engine also opens `agilebits.com/browsers/welcome.html`
 — another retired page. A `declarativeNetRequest` rule redirects both that and the
@@ -284,9 +283,6 @@ history is the undo.
   item's password (see above); register a second passkey there in iCloud Keychain.
   Sites accept several passkeys per account.
 
-Design and review history: [`docs/passkeys-design.md`](docs/passkeys-design.md).
-Live test record: [`docs/passkeys-testing.md`](docs/passkeys-testing.md).
-
 ## Layout
 
 ```
@@ -310,7 +306,6 @@ original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)
 seed-op4.ps1            first-run fix: set VerifyCodeSignature=0 (accept modern browsers)
 uninstall.ps1           remove the force-install policy
-docs/                   design specs, plans, reviews, test record
 LICENSE / NOTICE        MIT (original work) + third-party notices
 CHANGELOG.md            release history
 ```
@@ -329,7 +324,7 @@ in browsers that still accept Manifest V2 (e.g. current Vivaldi). The MV3 port i
 against 1Password 4 on Windows (tested 4.6.1.618): the service worker connects,
 first-run pairing self-completes (no dead page), and fill/save work. Each browser
 pairs under its own extension ID, so they run concurrently.
-Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4.6.1 in Edge 155; see docs/passkeys-testing.md.
+Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4.6.1 in Edge 155.
 
 ## Known risks
 
@@ -354,7 +349,6 @@ Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4
 - **WebAuthn PRF and largeBlob extensions are not supported** (only `credProps` is
   reported); sites that require them will not work with these passkeys.
 - Not for any web store; not for 1Password 8. Verified only with standalone (local / Dropbox) vaults; 1Password.com account vaults are untested.
-  See [`docs/`](docs/) for the full design.
 
 ## Changelog
 

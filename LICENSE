@@ -30,6 +30,6 @@ the Manifest V3 port glue and tooling authored for it, namely:
     src/rules/*
     install.ps1, install.bat, uninstall.ps1
     build/pack.ps1, build/compute-id.js
-    docs/*, README.md, CHANGELOG.md
+    README.md, CHANGELOG.md
 
 It does NOT apply to the bundled third-party components. See NOTICE.
