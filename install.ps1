@@ -14,15 +14,11 @@
   When run via irm|iex it downloads this repo's zip to %LOCALAPPDATA%\1Password-Reborn
   and installs from there. Review this script before running it - irm|iex executes
   remote code.
-
-  Tests: tests/policy.test.js dot-sources this file with -FunctionsOnly (functions and
-  variables only; no window, no menu).
 #>
 param(
   [ValidateSet('', 'force', 'unpacked', 'uninstall')]
   [string]$Mode = '',
-  [string]$PayloadRoot = '',  # internal: set when self-elevating to an already-staged path
-  [switch]$FunctionsOnly      # internal: define the functions and return (tests dot-source this file)
+  [string]$PayloadRoot = ''   # internal: set when self-elevating to an already-staged path
 )
 $ErrorActionPreference = 'Stop'
 
@@ -33,7 +29,7 @@ $Branch = 'main'
 # ======================================================
 
 $InstallDir    = Join-Path $env:LOCALAPPDATA '1Password-Reborn'
-$OldInstallDir = Join-Path $env:LOCALAPPDATA '1Password4-MV3'   # staged by the 1password4-mv3 installer; see the migration prompts
+$OldInstallDir = Join-Path $env:LOCALAPPDATA '1Password4-MV3'   # staged by the 1password4-mv3 installer; not migrated, only pointed out
 $RawBase    = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch"
 # Force-install fetches this manifest (and the crx it points to) over https from
 # GitHub. NOTE: Chrome only honors off-Web-Store force-install on ENTERPRISE-MANAGED
@@ -46,7 +42,7 @@ $UpdateUrl  = "$RawBase/dist/updates.xml"
 # `irm | iex`. Re-entry is guarded by OP4_WIN=1; the self-elevation path already
 # opens its own window and passes -Mode, so it does not double up here. No -NoExit:
 # the menu loops until the user picks [0] Quit, and then the window closes.
-if (-not $Mode -and -not $FunctionsOnly -and $env:OP4_WIN -ne '1') {
+if (-not $Mode -and $env:OP4_WIN -ne '1') {
   $reenter = if ($PSCommandPath) {
     "& '" + ($PSCommandPath -replace "'", "''") + "'"
   } else {
@@ -237,129 +233,20 @@ function Invoke-Elevated($payload, $modeName) {
     "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -Mode $modeName -PayloadRoot `"$payload`""
 }
 
-# ---- ExtensionSettings policy (pure; tested by tests/policy.test.js) ------------
-# Chrome applies ExtensionInstallForcelist first (mode force_installed, update URL from
-# the forcelist entry), then parses each per-ID ExtensionSettings entry on top. An
-# entry's own installation_mode replaces the forced mode, and only then is its
-# update_url read (an update_url in an entry without installation_mode is ignored).
-# override_update_url makes later update checks use the policy URL instead of the
-# manifest's, for force_installed/normal_installed with a non-Web-Store URL.
-# Both functions take the REG_SZ JSON text ('' = no value) and never touch the registry.
-# Chrome matches key names case-sensitively, PowerShell does not: look properties up by exact name.
-function Get-ExactProperty($obj, [string]$Name) {
-  return ($obj.PSObject.Properties | Where-Object { $_.Name -ceq $Name } | Select-Object -First 1)
-}
-function Merge-OverrideUpdateUrl {
-  # Result: migrated  - Json is the new value to write (this ID now carries
-  #                     override_update_url: true; every other key and ID is kept)
-  #         conflict  - another policy routes this ID (installation_mode present and not
-  #                     force_installed/normal_installed with a string update_url equal to
-  #                     $UpdateUrl; a non-string mode or update_url is a conflict too), or a
-  #                     key other than exactly $ExtId names it: Chrome also accepts a
-  #                     comma-separated list of IDs as a key, so any such key (or the ID in
-  #                     another letter case) is conservatively a conflict;
-  #                     Json is the input, unchanged; Mode/UpdateUrl are its values
-  #         invalid   - the value, or this ID's entry, is not a JSON object; Json unchanged
-  param([string]$Json = '', [Parameter(Mandatory)][string]$ExtId, [Parameter(Mandatory)][string]$UpdateUrl)
-  $out = [pscustomobject]@{ Result = ''; Json = $Json; Mode = $null; UpdateUrl = $null }
-  if ($Json -eq '') {
-    $root = [pscustomobject]@{}
-  } else {
-    try { $root = ConvertFrom-Json -InputObject $Json } catch { $root = $null }
-    if ($root -isnot [System.Management.Automation.PSCustomObject]) { $out.Result = 'invalid'; return $out }
-  }
-  foreach ($p in @($root.PSObject.Properties)) {
-    $k = $p.Name
-    if ($k -ceq '*' -or $k.StartsWith('update_url:', [System.StringComparison]::Ordinal) -or $k -ceq $ExtId) { continue }
-    $names = @($k.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
-    if (-not ($names | Where-Object { $_ -ieq $ExtId })) { continue }
-    if ($p.Value -is [System.Management.Automation.PSCustomObject]) {
-      $m = Get-ExactProperty $p.Value 'installation_mode'
-      $u = Get-ExactProperty $p.Value 'update_url'
-      if ($null -ne $m) { $out.Mode = $m.Value }
-      if ($null -ne $u) { $out.UpdateUrl = $u.Value }
-    }
-    $out.Result = 'conflict'
-    return $out
-  }
-  $prop = Get-ExactProperty $root $ExtId
-  if ($null -eq $prop) {
-    $root | Add-Member -NotePropertyName $ExtId -NotePropertyValue ([pscustomobject]@{ override_update_url = $true })
-  } else {
-    $entry = $prop.Value
-    if ($entry -isnot [System.Management.Automation.PSCustomObject]) { $out.Result = 'invalid'; return $out }
-    $modeProp = Get-ExactProperty $entry 'installation_mode'
-    if ($null -ne $modeProp) {
-      $urlProp = Get-ExactProperty $entry 'update_url'
-      $out.Mode = $modeProp.Value
-      if ($null -ne $urlProp) { $out.UpdateUrl = $urlProp.Value }
-      # Chrome reads both fields with GetString, so only string values can be the route we
-      # claim to have switched. No casting: [string]@('x') would pass as 'x' (review R1-1).
-      $routed  = ($modeProp.Value -is [string]) -and ($modeProp.Value -ceq 'force_installed' -or $modeProp.Value -ceq 'normal_installed')
-      $sameUrl = ($null -ne $urlProp) -and ($urlProp.Value -is [string]) -and ($urlProp.Value -ceq $UpdateUrl)
-      if (-not ($routed -and $sameUrl)) { $out.Result = 'conflict'; return $out }
-    }
-    $entry | Add-Member -NotePropertyName 'override_update_url' -NotePropertyValue $true -Force
-  }
-  $out.Json   = ConvertTo-Json -InputObject $root -Compress -Depth 32
-  $out.Result = 'migrated'
-  return $out
-}
-function Remove-OverrideUpdateUrl {
-  # Result: removed  - override_update_url removed from this ID's entry; the entry is dropped
-  #                    if empty; Json is the new value, or $null when no IDs remain (delete the value)
-  #         absent   - no value, no entry for this ID, or no override_update_url in it; Json unchanged
-  #         foreign  - the entry has installation_mode (another policy's); Json unchanged
-  #         invalid  - the value is not a JSON object; Json unchanged
-  param([string]$Json = '', [Parameter(Mandatory)][string]$ExtId)
-  $out = [pscustomobject]@{ Result = ''; Json = $Json }
-  if ($Json -eq '') { $out.Result = 'absent'; return $out }
-  try { $root = ConvertFrom-Json -InputObject $Json } catch { $root = $null }
-  if ($root -isnot [System.Management.Automation.PSCustomObject]) { $out.Result = 'invalid'; return $out }
-  # Only the exact key (case-sensitive) is ours; comma-listed or other-case keys are never touched.
-  $prop = Get-ExactProperty $root $ExtId
-  if ($null -eq $prop -or $prop.Value -isnot [System.Management.Automation.PSCustomObject]) { $out.Result = 'absent'; return $out }
-  $entry = $prop.Value
-  if ($null -ne (Get-ExactProperty $entry 'installation_mode')) { $out.Result = 'foreign'; return $out }
-  if ($null -eq (Get-ExactProperty $entry 'override_update_url')) { $out.Result = 'absent'; return $out }
-  $entry.PSObject.Properties.Remove('override_update_url')
-  if (@($entry.PSObject.Properties).Count -eq 0) { $root.PSObject.Properties.Remove($ExtId) }
-  if (@($root.PSObject.Properties).Count -eq 0) { $out.Json = $null } else { $out.Json = ConvertTo-Json -InputObject $root -Compress -Depth 32 }
-  $out.Result = 'removed'
-  return $out
-}
-
-# ---- Switching from the 1password4-mv3 install folder --------------------------
-# When Force install or Uninstall runs elevated under a different admin account,
-# $env:LOCALAPPDATA (and so $InstallDir / $OldInstallDir) is that account's, so the
-# folder prompts see that profile (usually nothing to offer).
-function Test-OldInstall($payload) {
-  # The 1password4-mv3 installer staged %LOCALAPPDATA%\1Password4-MV3. The migration
-  # prompts apply only when that folder exists and is not the folder we run from.
-  if (-not (Test-Path $OldInstallDir)) { return $false }
+# ---- An old 1password4-mv3 install ---------------------------------------------
+function Show-OldInstallNotice($payload) {
+  # Reborn does not migrate the 1password4-mv3 install: the user removes it and installs
+  # fresh. The notice appears only while that folder exists and is not the one we run from.
+  if (-not (Test-Path $OldInstallDir)) { return }
   $old = (Resolve-Path $OldInstallDir).Path.TrimEnd('\')
   $cur = (Resolve-Path $payload).Path.TrimEnd('\')
-  return ($old -ne $cur)
-}
-function Invoke-OldFolderPrompt {
-  # Several browsers and profiles can load the same old folder; switching one does not
-  # switch the others. Default No; only 'y' deletes.
-  if (-not (Test-Path $OldInstallDir)) { return }
+  if ($old -eq $cur) { return }
+  Write-Mid 'An old 1password4-mv3 install was found:' 'Yellow'
+  Write-Mid ('  ' + $OldInstallDir) 'Yellow'
+  Write-Mid 'Reborn does not migrate it. Remove the old extension first' 'Gray'
+  Write-Mid '(for a force install: run Uninstall), then install Reborn.' 'Gray'
+  Write-Mid 'Delete that folder by hand once no browser uses it.' 'Gray'
   Write-Host ''
-  Write-Mid ('The old folder ' + $OldInstallDir) 'Yellow'
-  Write-Mid 'may still be loaded by another browser or profile.' 'Yellow'
-  Write-Mid 'Delete it only after every browser and profile that loaded it has switched.' 'Yellow'
-  $ans = (Read-Host ((' ' * (Get-Margin)) + 'Delete it now? [y/N]')).Trim().ToLower()
-  if ($ans -eq 'y') {
-    try {
-      Remove-Item -Recurse -Force $OldInstallDir
-      Write-Mid ('Deleted ' + $OldInstallDir) 'Green'
-    } catch {
-      Write-Mid ('Could not delete ' + $OldInstallDir + ': ' + $_.Exception.Message) 'Red'
-    }
-  } else {
-    Write-Mid ('Kept. Delete it later: ' + $OldInstallDir) 'Gray'
-  }
 }
 
 function Install-Force($payload) {
@@ -392,67 +279,17 @@ function Install-Force($payload) {
   if (-not $target) { $target = [string]($max + 1) }
   Set-ItemProperty -Path $key -Name $target -Value "$extId;$UpdateUrl"
 
-  # Update route. The forcelist alone only installs; later update checks follow the crx
-  # manifest's update_url (none before 1.4.0, so they went to the Web Store and never
-  # found us). A per-ID override_update_url in ExtensionSettings makes them follow the
-  # policy URL above instead. Merge-OverrideUpdateUrl decides whether that is safe here.
-  # Chrome also reads ExtensionSettings as a registry key tree and prefers it over the
-  # JSON value, so that form is checked first: a value we wrote would be ignored.
-  $settingsKey = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
-  if (Test-Path (Join-Path $settingsKey 'ExtensionSettings')) {
-    $route = [pscustomobject]@{ Result = 'registry-key'; Json = $null; Mode = $null; UpdateUrl = $null }
-  } else {
-    $raw = $null
-    try { $raw = (Get-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -ErrorAction Stop).ExtensionSettings } catch {}
-    $route = Merge-OverrideUpdateUrl -Json ([string]$raw) -ExtId $extId -UpdateUrl $UpdateUrl
-  }
-  if ($route.Result -eq 'migrated') {
-    Set-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -Value $route.Json -Type String
-  }
-
   Write-Host ''
   Write-Mid 'Force-install policy set for extension:' 'Green'
   Write-Mid ('  ' + $extId) 'Green'
-  switch ($route.Result) {
-    'migrated' {
-      Write-Mid 'Updates now come from' 'Green'
-      Write-Mid ('  ' + $UpdateUrl) 'Green'
-    }
-    'conflict' {
-      $mode = if ($null -eq $route.Mode) { '(none)' } else { [string]$route.Mode }
-      $url  = if ($null -eq $route.UpdateUrl) { '(none)' } else { [string]$route.UpdateUrl }
-      Write-Mid 'Update route NOT switched: another policy already routes this' 'Yellow'
-      Write-Mid 'extension in ExtensionSettings, so the migration was not applied.' 'Yellow'
-      Write-Mid ('  installation_mode: ' + $mode) 'Yellow'
-      Write-Mid ('  update_url:        ' + $url) 'Yellow'
-      Write-Mid 'To switch: set that update_url to' 'Gray'
-      Write-Mid ('  ' + $UpdateUrl) 'Gray'
-      Write-Mid 'or remove the entry, then run Force install again.' 'Gray'
-    }
-    'invalid' {
-      Write-Mid 'Update route NOT switched: the ExtensionSettings value is not' 'Yellow'
-      Write-Mid 'a JSON object, or its entry for this extension is not one.' 'Yellow'
-      Write-Mid 'It was left unchanged; fix it, then run Force install again.' 'Yellow'
-    }
-    'registry-key' {
-      Write-Mid 'Update route NOT switched: ExtensionSettings is set as a' 'Yellow'
-      Write-Mid 'registry key, which Chrome reads instead of the JSON value,' 'Yellow'
-      Write-Mid 'so the migration was not applied. Add override_update_url' 'Yellow'
-      Write-Mid 'for this extension there, then run Force install again.' 'Gray'
-    }
-  }
   Restart-Chrome
   Write-Host ''
   Write-Mid "chrome://extensions should show 'Installed by policy'." 'Gray'
   Write-Mid 'If not: chrome://policy -> Reload policies, then restart Chrome.' 'Gray'
-  if (Test-OldInstall $payload) { Invoke-OldFolderPrompt }
 }
 function Install-Unpacked($payload) {
   $src = Join-Path $payload 'src'
   if (-not (Test-Path $src)) { throw "Missing $src." }
-  $migrate = Test-OldInstall $payload
-  $total   = if ($migrate) { 6 } else { 5 }   # one extra step: remove the old extension
-  $n       = 0
   # First-run fix: let 1Password 4 accept modern Chrome (see Set-VerifyCodeSignatureOff).
   if (Set-VerifyCodeSignatureOff) { Restart-Agent }
 
@@ -477,9 +314,9 @@ function Install-Unpacked($payload) {
     @{ Key = '6'; Name = 'Other';   Url = '';                     Proc = ''; Paths = @() }
   )
 
-  # ---- Step: pick a browser ----
+  # ---- Step 1 of 5: pick a browser ----
   Clear-Host
-  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
+  Write-Mid '=== Load unpacked  -  step 1 of 5 ===' 'Cyan'
   Write-Host ''
   Write-Mid 'Which browser are you installing into?' 'White'
   Write-Host ''
@@ -489,9 +326,9 @@ function Install-Unpacked($payload) {
   $browser = $browsers | Where-Object { $_.Key -eq $sel } | Select-Object -First 1
   if (-not $browser) { $browser = $browsers[-1] }   # anything else -> Other
 
-  # ---- Step: open the extensions page (URL to clipboard) ----
+  # ---- Step 2 of 5: open the extensions page (URL to clipboard) ----
   Clear-Host
-  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
+  Write-Mid '=== Load unpacked  -  step 2 of 5 ===' 'Cyan'
   Write-Host ''
   Write-Mid ('Open the extensions page in ' + $browser.Name) 'White'
   Write-Host ''
@@ -507,22 +344,9 @@ function Install-Unpacked($payload) {
   Write-Host ''
   Read-Host ((' ' * (Get-Margin)) + 'Press Enter (or y) when the page is open') | Out-Null
 
-  # ---- Step (switching from 1password4-mv3 only): remove the old extension ----
-  if ($migrate) {
-    Clear-Host
-    $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
-    Write-Host ''
-    Write-Mid 'Remove the old extension' 'White'
-    Write-Host ''
-    Write-Mid 'Its card still says "1Password extension (desktop app required)".' 'Gray'
-    Write-Mid 'Click Remove on that card.' 'Gray'
-    Write-Host ''
-    Read-Host ((' ' * (Get-Margin)) + 'Press Enter (or y) when it is removed') | Out-Null
-  }
-
-  # ---- Step: developer mode ----
+  # ---- Step 3 of 5: developer mode ----
   Clear-Host
-  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
+  Write-Mid '=== Load unpacked  -  step 3 of 5 ===' 'Cyan'
   Write-Host ''
   Write-Mid 'Turn ON "Developer mode"' 'White'
   Write-Host ''
@@ -531,10 +355,10 @@ function Install-Unpacked($payload) {
   Write-Host ''
   Read-Host ((' ' * (Get-Margin)) + 'Press Enter (or y) when Developer mode is on') | Out-Null
 
-  # ---- Step: Load unpacked, paste the folder ----
+  # ---- Step 4 of 5: Load unpacked, paste the folder ----
   try { Set-Clipboard -Value $src } catch {}
   Clear-Host
-  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
+  Write-Mid '=== Load unpacked  -  step 4 of 5 ===' 'Cyan'
   Write-Host ''
   Write-Mid 'Click "Load unpacked", then paste the folder' 'White'
   Write-Host ''
@@ -542,14 +366,12 @@ function Install-Unpacked($payload) {
   Write-Host ''
   Write-Mid 'In the folder picker, press Ctrl+V then Enter.' 'Gray'
   Write-Mid 'Keep that folder in place - the browser reloads it each launch.' 'Gray'
-  if ($migrate) { Write-Mid 'If the 1Password app asks to pair again, approve it.' 'Gray' }
   Write-Host ''
   Read-Host ((' ' * (Get-Margin)) + 'Press Enter (or y) when the extension has loaded') | Out-Null
-  if ($migrate) { Invoke-OldFolderPrompt }
 
-  # ---- Step: restart the browser (auto or manual) ----
+  # ---- Step 5 of 5: restart the browser (auto or manual) ----
   Clear-Host
-  $n++; Write-Mid ('=== Load unpacked  -  step ' + $n + ' of ' + $total + ' ===') 'Cyan'
+  Write-Mid '=== Load unpacked  -  step 5 of 5 ===' 'Cyan'
   Write-Host ''
   Write-Mid 'Restart your browser to finish first-time pairing' 'White'
   Write-Host ''
@@ -598,61 +420,10 @@ function Uninstall-Force($payload) {
     $rem = (Get-Item -Path $key).GetValueNames() | Where-Object { $_ -ne '' }
     if (-not $rem) { Remove-Item -Path $key -Force }
   }
-  # Our override_update_url lives in an entry without installation_mode (the shape Force
-  # install creates). Entries with installation_mode belong to another policy: left alone.
-  $settingsKey = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
-  $raw = $null
-  try { $raw = (Get-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -ErrorAction Stop).ExtensionSettings } catch {}
-  $route = Remove-OverrideUpdateUrl -Json ([string]$raw) -ExtId $extId
-  switch ($route.Result) {
-    'removed' {
-      if ($null -eq $route.Json) {
-        Remove-ItemProperty -Path $settingsKey -Name 'ExtensionSettings'
-        Write-Mid 'Removed the ExtensionSettings value (nothing else was in it).' 'Gray'
-      } else {
-        Set-ItemProperty -Path $settingsKey -Name 'ExtensionSettings' -Value $route.Json -Type String
-        Write-Mid 'Removed override_update_url from ExtensionSettings.' 'Gray'
-      }
-    }
-    'foreign' {
-      Write-Mid 'The ExtensionSettings entry for this extension belongs to' 'Gray'
-      Write-Mid 'another policy; left unchanged.' 'Gray'
-    }
-    'invalid' { Write-Mid 'ExtensionSettings is not a JSON object; left unchanged.' 'Yellow' }
-  }
-  if (Test-Path (Join-Path $settingsKey 'ExtensionSettings')) {
-    Write-Mid 'ExtensionSettings is also set as a registry key; that key' 'Gray'
-    Write-Mid 'belongs to another policy and was left unchanged.' 'Gray'
-  }
   Restart-Chrome
   Write-Host ''
   Write-Mid 'Force-install policy removed.' 'Green'
-  if (Test-OldInstall $payload) {
-    $dirs = @($InstallDir, $OldInstallDir) | Where-Object { Test-Path $_ }
-    if ($dirs) {
-      Write-Host ''
-      Write-Mid 'Also delete the staged folders?' 'Yellow'
-      foreach ($d in $dirs) { Write-Mid ('  ' + $d) 'Yellow' }
-      Write-Mid 'A load-unpacked extension stops working.' 'Yellow'
-      $ans = (Read-Host ((' ' * (Get-Margin)) + '[y/N]')).Trim().ToLower()
-      if ($ans -eq 'y') {
-        foreach ($d in $dirs) {
-          try {
-            Remove-Item -Recurse -Force $d
-            Write-Mid ('Deleted ' + $d) 'Green'
-          } catch {
-            Write-Mid ('Could not delete ' + $d + ': ' + $_.Exception.Message) 'Red'
-          }
-        }
-      } else {
-        Write-Mid 'Kept.' 'Gray'
-      }
-    }
-  }
 }
-
-# Tests dot-source this file with -FunctionsOnly to get the functions and variables above and nothing else.
-if ($FunctionsOnly) { return }
 
 # ---- main ----
 [Net.ServicePointManager]::SecurityProtocol = `
@@ -711,6 +482,7 @@ while ($true) {
     Write-Host $r.Hint -ForegroundColor Gray
   }
   Write-Host ''
+  Show-OldInstallNotice $payload
   $choice = (Read-Host ((' ' * (Get-Margin)) + 'Choose')).Trim().ToLower()
   if ($choice -eq '0' -or $choice -eq 'q') { break }
   if ($choice -notin '1', '2', '3') { continue }
