@@ -10,6 +10,9 @@
  *   3. blocking webRequest    — stripped; the DNR rules do the redirects.
  *   4. contextMenus onclick   — MV3 dropped it; dispatched from onClicked.
  *   5. benign engine errors   — quieted.
+ *   6. native-messaging error — Firefox's "No such native application" is presented as
+ *                               Chrome's "Specified native messaging host not found." so
+ *                               the engine falls back to 1Password 4's WebSocket.
  */
 
 'use strict';
@@ -156,4 +159,45 @@ if (chrome.action && !chrome.browserAction) {
       }));
     };
   }
+})();
+
+/* 6. Native-messaging error adapter (Firefox) --------------------------------- */
+// The engine's disconnect handler (global.min.js:256) reads
+// `chrome.runtime.lastError || port.error` and switches on the message: only Chrome's exact
+// "Specified native messaging host not found." makes it fall back to the 1Password 4
+// WebSocket transport (ws://127.0.0.1:6263/4, then its other ports); anything else pauses
+// and retries native messaging forever. Firefox sets no lastError there and reports
+// "No such native application <host>" on port.error, the same text for a missing host and
+// for a host that does not allow this extension ID. Present that case as the Chrome text.
+// Chrome never sets port.error, so there the wrapper is a pass-through. The wrapper is a
+// plain object on purpose: the engine writes `readyToSend` on the port it holds.
+(function adaptNativeMessagingError() {
+  const rt = chrome.runtime;
+  if (!rt || typeof rt.connectNative !== 'function') return;
+  const CHROME_MISSING_HOST = 'Specified native messaging host not found.';
+  const FIREFOX_MISSING_HOST = 'No such native application';
+  const origConnect = rt.connectNative.bind(rt);
+  rt.connectNative = function (name) {
+    const real = origConnect(name);
+    const wrapper = {
+      get name() { return real.name; },
+      onMessage: real.onMessage,
+      postMessage: function (msg) { return real.postMessage(msg); },
+      disconnect: function () { return real.disconnect(); },
+      get error() {
+        const err = real.error;
+        if (err && typeof err.message === 'string' && err.message.indexOf(FIREFOX_MISSING_HOST) === 0) {
+          return { message: CHROME_MISSING_HOST };
+        }
+        return err;
+      },
+      onDisconnect: {
+        addListener: function (cb) {
+          real.onDisconnect.addListener(function () { cb(wrapper); });
+        },
+      },
+      toString: function () { return '[object Port]'; },
+    };
+    return wrapper;
+  };
 })();
