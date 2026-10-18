@@ -42,3 +42,22 @@ test('keep-alive schedules its first ping at 20 s and re-arms after each ping', 
   pings()[0].fn();
   assert.equal(pings().length, 2);
 });
+
+test('reportWebsiteIssue opens nothing and never reaches the engine handler', () => {
+  let origCalls = 0;
+  const AH = { authNew() {}, reportWebsiteIssue() { origCalls += 1; } };
+  const { calls, logs } = loadAfter(AH);
+  AH.reportWebsiteIssue({ reviewMarker: 'synthetic-only' });
+  assert.equal(origCalls, 0);
+  assert.deepEqual([calls.tabsCreate, calls.tabsUpdate, calls.windowsCreate], [[], [], []]);
+  assert.ok(logs.some((l) => l.level === 'info' && l.text.includes('website-issue report suppressed')));
+});
+
+test('the pairing bypass and the report suppression coexist on one AgentHandlers', () => {
+  const seen = [];
+  const AH = { authNew(a) { seen.push(a); }, reportWebsiteIssue() { throw new Error('must not run'); } };
+  loadAfter(AH);
+  AH.authNew({ code: '42', extId: 'z' });
+  AH.reportWebsiteIssue({});
+  assert.deepEqual(seen, [{ extId: 'z' }]);
+});

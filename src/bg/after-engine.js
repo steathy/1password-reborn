@@ -3,8 +3,9 @@
  * AFTER global.min.js on both browsers: Chrome imports it from sw-bootstrap.js, Firefox
  * lists it after global.min.js in background.scripts.
  *
- *   1. pairing bypass — the retired agilebits.com display page is skipped.
- *   2. keep-alive     — holds the background alive while it runs.
+ *   1. pairing bypass      — the retired agilebits.com display page is skipped.
+ *   2. report suppression  — the retired synapse.agilebits.com report never opens.
+ *   3. keep-alive          — holds the background alive while it runs.
  */
 
 'use strict';
@@ -44,7 +45,25 @@
   }
 })();
 
-/* 2. Keep-alive ---------------------------------------------------------------- */
+/* 2. Suppress the legacy "report website issue" navigation ------------------- */
+// The desktop app can send `reportWebsiteIssue`; the engine's handler (global.min.js:96)
+// opens https://synapse.agilebits.com/report?... carrying the page URL and browser details.
+// That endpoint is retired (it redirects to a generic help page) and Reborn is local-only:
+// the Firefox builds declare that data goes to the local 1Password app and nowhere else.
+// The engine looks handlers up by name at call time (AgentHandlers[action](payload)), so
+// replacing the property is enough; the engine file stays untouched.
+(function suppressWebsiteIssueReport() {
+  const AH = self.AgentHandlers;
+  if (!AH || typeof AH.reportWebsiteIssue !== 'function') {
+    console.warn('[1P-MV3] AgentHandlers.reportWebsiteIssue missing; nothing to suppress');
+    return;
+  }
+  AH.reportWebsiteIssue = function () {
+    console.info('[1P-MV3] website-issue report suppressed (synapse.agilebits.com retired; local-only build)');
+  };
+})();
+
+/* 3. Keep-alive---------------------------------------------------------------- */
 // The engine holds the authenticated session and derived encryption keys in
 // memory. As a password manager paired with a local desktop app it expects the
 // persistent-background-page lifetime it had under MV2. Poll a trivial chrome
