@@ -18,7 +18,7 @@ const RAW = 'https://raw.githubusercontent.com/steathy/1password-reborn/main';
 const srcManifest = JSON.parse(fs.readFileSync(path.join(SRC, 'manifest.json'), 'utf8'));
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const UNCHANGED_KEYS = ['manifest_version', 'name', 'version', 'description', 'author', 'short_name', 'homepage_url',
-  'icons', 'action', 'content_scripts', 'declarative_net_request', 'incognito', 'permissions', 'host_permissions',
+  'icons', 'action', 'content_scripts', 'declarative_net_request', 'incognito',
   'web_accessible_resources'];
 
 function listFiles(dir, base = dir) {
@@ -47,7 +47,7 @@ it('1. background.scripts equals the importScripts order of src/sw-bootstrap.js'
 });
 
 for (const v of P.VARIANTS) {
-  it(`2. ${v.key}: gecko block, background.scripts, removed keys`, () => {
+  it(`2. ${v.key}: gecko block, background.scripts, Firefox-only additions, removed keys`, () => {
     const m = readManifest(stages[v.key]);
     assert.deepEqual(m.browser_specific_settings, {
       gecko: {
@@ -58,13 +58,18 @@ for (const v of P.VARIANTS) {
       },
     });
     assert.deepEqual(m.background, { scripts: P.BACKGROUND_SCRIPTS });
+    assert.deepEqual(m.content_security_policy, { extension_pages: "script-src 'self';" });
+    assert.deepEqual(m.permissions, [...srcManifest.permissions, 'webRequestBlocking']);
+    assert.deepEqual(m.host_permissions, [...srcManifest.host_permissions, 'ws://127.0.0.1/*']);
+    assert.equal('content_security_policy' in srcManifest, false, 'src/manifest.json has its own CSP; revisit the Firefox override');
     for (const k of ['key', 'minimum_chrome_version', 'version_name']) assert.equal(k in m, false, k);
   });
 
-  it(`3. ${v.key}: everything else is identical to src/manifest.json`, () => {
+  it(`3. ${v.key}: every other key is identical to src/manifest.json`, () => {
     const m = readManifest(stages[v.key]);
     for (const k of UNCHANGED_KEYS) assert.deepEqual(m[k], srcManifest[k], k);
-    assert.deepEqual(Object.keys(m).sort(), [...UNCHANGED_KEYS, 'background', 'browser_specific_settings'].sort());
+    assert.deepEqual(Object.keys(m).sort(), [...UNCHANGED_KEYS, 'permissions', 'host_permissions', 'content_security_policy',
+      'background', 'browser_specific_settings'].sort());
   });
 }
 

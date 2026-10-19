@@ -13,6 +13,9 @@
  *   6. native-messaging error — Firefox's "No such native application" is presented as
  *                               Chrome's "Specified native messaging host not found." so
  *                               the engine falls back to 1Password 4's WebSocket.
+ *   7. WebSocket origin       — Firefox only: the extension's own handshakes to
+ *                               127.0.0.1 carry the legacy Firefox add-on origin
+ *                               that 1Password 4 knows.
  */
 
 'use strict';
@@ -57,6 +60,7 @@ if (chrome.action && !chrome.browserAction) {
         ? orig(cb, filter)
         : orig(cb, filter, extraInfoSpec);
     };
+    patched.original = orig;   // shim 7 registers its blocking listener through this on Firefox
     try {
       ev.addListener = patched;
       if (ev.addListener !== patched) throw new Error('addListener not writable');
@@ -200,4 +204,38 @@ if (chrome.action && !chrome.browserAction) {
     };
     return wrapper;
   };
+})();
+
+/* 7. WebSocket origin for 1Password 4 (Firefox) ------------------------------- */
+// 1Password 4's helper (Agile1pAgent.exe) answers a WebSocket client only when the handshake's
+// Origin is one it knows: chrome-extension://..., safari-extension://com.agilebits.onepassword[4]
+// or resource://onepassword-at-agilebits-dot-com (AgileBits' legacy Firefox add-on). Any other
+// origin is logged as "Bundle unknown" and its messages are ignored, so the engine waits
+// forever after "connected to port 6263.". A Firefox WebExtension's origin is
+// moz-extension://<uuid>; on Firefox this rewrites the Origin of the extension's OWN WebSocket
+// handshakes to 127.0.0.1 into the legacy add-on's origin. Any other Origin (a web page's) is
+// left alone, so no website can borrow the extension's identity. Chrome sends
+// chrome-extension://<id>, which the helper accepts, and has no blocking webRequest in MV3:
+// there the shim does nothing. Shim 3 strips 'blocking' from every addListener call, so the
+// listener is registered through the original method shim 3 keeps as addListener.original.
+(function presentLegacyFirefoxOrigin() {
+  const rt = chrome.runtime;
+  const base = rt && typeof rt.getURL === 'function' ? rt.getURL('') : '';
+  if (base.indexOf('moz-extension://') !== 0) return;
+  const ev = chrome.webRequest && chrome.webRequest.onBeforeSendHeaders;
+  if (!ev || typeof ev.addListener !== 'function') return;
+  const OWN_ORIGIN = base.replace(/\/$/, '');
+  const LEGACY_FIREFOX_ORIGIN = 'resource://onepassword-at-agilebits-dot-com';
+  const add = typeof ev.addListener.original === 'function' ? ev.addListener.original : ev.addListener.bind(ev);
+  try {
+    add(function (details) {
+      const headers = details.requestHeaders || [];
+      const origin = headers.find((h) => h.name.toLowerCase() === 'origin');
+      if (!origin || origin.value !== OWN_ORIGIN) return {};
+      origin.value = LEGACY_FIREFOX_ORIGIN;
+      return { requestHeaders: headers };
+    }, { urls: ['ws://127.0.0.1/*'], types: ['websocket'] }, ['blocking', 'requestHeaders']);
+  } catch (e) {
+    console.error('[1P-MV3] WebSocket origin shim failed to register', e);
+  }
 })();

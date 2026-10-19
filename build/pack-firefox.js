@@ -53,6 +53,13 @@ const BACKGROUND_SCRIPTS = [
   'ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js', 'passkeys/fill-script.js', 'passkeys/sw-passkeys.js',
 ];
 const REMOVED_KEYS = ['key', 'minimum_chrome_version', 'version_name'];
+// Firefox-only manifest additions (docs/firefox-design.md section 1, Gate 2 finding). Firefox's
+// default MV3 CSP adds upgrade-insecure-requests, which turns the engine's ws://127.0.0.1
+// into wss:// that 1Password 4 cannot answer; this is the default minus that directive.
+// webRequestBlocking + ws://127.0.0.1 let shim 7 present the legacy Firefox add-on origin.
+const FIREFOX_CSP = { extension_pages: "script-src 'self';" };
+const FIREFOX_PERMISSIONS = ['webRequestBlocking'];
+const FIREFOX_HOST_PERMISSIONS = ['ws://127.0.0.1/*'];
 const ENGINE_FILES = ['global.min.js', 'injected.min.js', 'ext/sjcl.js', 'fillStyle.css'];
 // Reviewed and accepted lint warnings (docs/firefox-design.md §6): the engine's three
 // browserAction calls (covered by shim 2) and the Android minimum-version notice (Android
@@ -73,6 +80,9 @@ function firefoxManifest(srcManifest, variant) {
   const m = JSON.parse(JSON.stringify(srcManifest));
   for (const k of REMOVED_KEYS) delete m[k];
   m.background = { scripts: BACKGROUND_SCRIPTS.slice() };
+  m.permissions = m.permissions.concat(FIREFOX_PERMISSIONS);
+  m.host_permissions = m.host_permissions.concat(FIREFOX_HOST_PERMISSIONS);
+  m.content_security_policy = JSON.parse(JSON.stringify(FIREFOX_CSP));
   m.browser_specific_settings = {
     gecko: {
       id: variant.id,
