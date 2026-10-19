@@ -7,6 +7,8 @@ build/*.pem
 build/staging/
 build/*.crx
 build/*.reg
+build/staging-firefox/
+web-ext-artifacts/
 
 # OS / editor cruft
 Thumbs.db
