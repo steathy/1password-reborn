@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "1Password Reborn (desktop app required)",
-  "version": "4.7.5.91",
-  "version_name": "4.7.5.91 (Reborn 1.4.0)",
+  "version": "4.7.5.92",
+  "version_name": "4.7.5.92 (Reborn 1.5.0)",
   "description": "Unofficial MV3 rebirth of the classic 1Password extension for the 1Password 4–7 desktop apps, now with passkeys.",
   "author": "steathy (unofficial; engine © AgileBits)",
   "short_name": "1P Reborn",

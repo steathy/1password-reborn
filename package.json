@@ -1,6 +1,6 @@
 {
   "name": "1password-reborn",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Unofficial MV3 rebirth of the classic 1Password extension for the 1Password 4–7 desktop apps, with passkeys",
   "engines": {
