@@ -9,7 +9,9 @@
  *
  * For each variant: copy src/ (minus _metadata/) to build/staging-firefox/<key>/, write a
  * Firefox manifest.json (background.scripts instead of the service worker; gecko ID,
- * strict_min_version, update_url and the data-collection declaration), run
+ * strict_min_version, update_url, the data-collection declaration, a CSP override without
+ * upgrade-insecure-requests, and the Firefox-only webRequestBlocking and ws://127.0.0.1/*
+ * permissions for shim 7), run
  * `web-ext lint --self-hosted` (zero errors, only the expected warnings), then `web-ext build`.
  *   1p7 -> dist/firefox/1password-reborn-firefox-1p7.xpi           (committed as is)
  *   1p4 -> build/staging-firefox/unsigned/1password-reborn-firefox.xpi
@@ -36,7 +38,7 @@ const STRICT_MIN_VERSION = '140.0';
 // Mozilla requires this for every extension first signed after 2025-11-03. The types are
 // what the engine sends to the LOCAL 1Password app (saveLogin: credentials; activeURL /
 // showPopup: page URL; all three: collected page details). Nothing goes anywhere else
-// (tests/engine-inventory.test.js). Both variants carry it; see docs/firefox-design.md §1.
+// (tests/engine-inventory.test.js). Both variants carry it.
 const DATA_COLLECTION = { required: ['authenticationInfo', 'browsingActivity', 'websiteContent'] };
 
 const VARIANTS = [
@@ -53,7 +55,7 @@ const BACKGROUND_SCRIPTS = [
   'ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js', 'passkeys/fill-script.js', 'passkeys/sw-passkeys.js',
 ];
 const REMOVED_KEYS = ['key', 'minimum_chrome_version', 'version_name'];
-// Firefox-only manifest additions (docs/firefox-design.md section 1, Gate 2 finding). Firefox's
+// Firefox-only manifest additions (found in the Gate 2 test). Firefox's
 // default MV3 CSP adds upgrade-insecure-requests, which turns the engine's ws://127.0.0.1
 // into wss:// that 1Password 4 cannot answer; this is the default minus that directive.
 // webRequestBlocking + ws://127.0.0.1 let shim 7 present the legacy Firefox add-on origin.
@@ -61,7 +63,7 @@ const FIREFOX_CSP = { extension_pages: "script-src 'self';" };
 const FIREFOX_PERMISSIONS = ['webRequestBlocking'];
 const FIREFOX_HOST_PERMISSIONS = ['ws://127.0.0.1/*'];
 const ENGINE_FILES = ['global.min.js', 'injected.min.js', 'ext/sjcl.js', 'fillStyle.css'];
-// Reviewed and accepted lint warnings (docs/firefox-design.md §6): the engine's three
+// Reviewed and accepted lint warnings: the engine's three
 // browserAction calls (covered by shim 2) and the Android minimum-version notice (Android
 // is out of scope; the built-in consent starts at Firefox for Android 142).
 const EXPECTED_WARNINGS = ['KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION', 'UNSUPPORTED_API', 'UNSUPPORTED_API', 'UNSUPPORTED_API'];
@@ -177,7 +179,7 @@ function main(argv = process.argv.slice(2)) {
     }
     console.log('[' + v.key + '] lint    0 errors, expected warnings only');
     const out = build(stage, v.xpi, v.signed ? path.join(STAGING, 'unsigned') : DIST_FIREFOX);
-    console.log('[' + v.key + '] built   ' + path.relative(ROOT, out) + (v.signed ? '  (unsigned; sign from the stage, see docs)' : ''));
+    console.log('[' + v.key + '] built   ' + path.relative(ROOT, out) + (v.signed ? '  (unsigned; sign it with web-ext sign --channel unlisted from build/staging-firefox/1p4)' : ''));
   }
   if (stageOnly) return;
   fs.mkdirSync(DIST_FIREFOX, { recursive: true });

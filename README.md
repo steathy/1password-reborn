@@ -111,6 +111,11 @@ manifest lists the background files in the order Chrome imports them.
   `ws://`, which Firefox would otherwise upgrade. That is why the Firefox manifests request
   blocking request access and `ws://127.0.0.1` (Firefox lists it as "Access your data for
   ws://127.0.0.1"); no other request is changed, and web pages cannot use it. Once paired, the engine encrypts what it sends over that connection.
+- **Keep the "Access your data for ws://127.0.0.1" permission on.** The 1Password 4 build needs it
+  (`about:addons` → 1Password Reborn → Permissions). If you turn it off, the connection to
+  1Password 4 stops and the app never answers.
+- **Install only the one XPI that matches your 1Password app.** The two builds have different
+  IDs, so Firefox would accept both, and two copies would both inject into pages and run the engine.
 - Not covered: Firefox for Android, macOS and Linux, and enterprise-policy installs.
 
 ## Moving from 1password4-mv3
@@ -305,7 +310,7 @@ would copy the private key into a visible Bitwarden password. Editing the concea
 history is the undo.
 
 **Limitations.**
-- Chromium 111+; top-level frames; modal requests only. Sites that use the browser's
+- Chromium 111+ or Firefox 140+ (verified in Firefox 158 in the 1.5.0 gates); top-level frames; modal requests only. Sites that use the browser's
   autofill-style passkey dropdown still work through their "Sign in with a passkey"
   button; the dropdown itself shows only browser-native passkeys.
 - ES256 only. Requests that demand a `cross-platform` authenticator go straight to
@@ -343,7 +348,7 @@ src/                    the loadable / packable MV3 extension
   assets/               icons
 build/                  pack.ps1 + compute-id.js (crx), pack-firefox.js (XPIs); key.pem gitignored
 tools/                  1pif-to-bitwarden.js (migrate passkeys to Bitwarden)
-tests/                  node --test suites for the pure passkey modules
+tests/                  node --test suites: passkey modules, background shims, Firefox packer, installer, release metadata
 dist/                   committed install artifacts: signed crx + extension.json + updates.xml; firefox/ (two XPIs + updates.json)
 original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)
@@ -377,7 +382,9 @@ Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4
   (re-handshake). Watch for reconnect churn in the console. Firefox unloads an idle event
   page after about 30 s; in the 1.5.0 smoke test (Firefox 158) the keep-alive held it: after more than 5 minutes idle, fill still worked with no reconnect.
 - **`ws://127.0.0.1` from a service worker** is expected to work (extension origin
-  is exempt from Private Network Access); confirm on your setup.
+  is exempt from Private Network Access); confirm on your setup. On Firefox (event page)
+  the connection works through the CSP override and shim 7 (see Firefox); Firefox 158's
+  Local Network Access did not prompt for it in the 1.5.0 tests.
 - **Passkeys depend on two in-page clicks and the app's untagged popup reply.** See
   the Passkeys section; a stale popup can never complete another tab's request, but
   it can leave a confusing "no passkey" notice.
@@ -400,12 +407,12 @@ See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.5.0**.
 
 ## License
 
-The original work in this repository — the MV3 port glue (`src/sw-bootstrap.js`, the
+The original work in this repository — the MV3 port glue (`src/sw-bootstrap.js`, `src/bg/`, the
 MV3 `manifest.json`, DNR rules) and the install/build tooling — is licensed under the
 **[MIT License](LICENSE)**.
 
 The bundled 1Password extension files (`src/global.min.js`, `src/injected.min.js`,
-`src/assets/*`, the `.crx` files) are **© AgileBits Inc. / 1Password** and are *not*
+`src/assets/*`, the `.crx` and `.xpi` files) are **© AgileBits Inc. / 1Password** and are *not*
 covered by the MIT license; `src/ext/sjcl.js` is the Stanford JS Crypto Library
 (BSD-2-Clause / GPL). See [`NOTICE`](NOTICE) for details. This is an unofficial,
 community port, not affiliated with or endorsed by 1Password.

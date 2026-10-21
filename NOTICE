@@ -13,9 +13,21 @@ endorsement by 1Password / AgileBits is claimed or implied.
    - src/assets/*  (icons)
    - original/1Password-4.7.5.90.crx   (the unmodified original MV2 extension)
    - dist/1password-reborn.crx         (the above engine repackaged for MV3;
-                                        only manifest.json, sw-bootstrap.js and
-                                        passkeys/ are original work, the rest is
+                                        only manifest.json, sw-bootstrap.js,
+                                        bg/, rules/, paired.html and passkeys/
+                                        are original work, the rest is
                                         unchanged)
+   - dist/firefox/1password-reborn-firefox.xpi
+                                       (the same engine repackaged for Firefox,
+                                        for 1Password 4, signed by Mozilla; the
+                                        engine files are unchanged; only
+                                        manifest.json, sw-bootstrap.js, bg/,
+                                        rules/, paired.html and passkeys/ are
+                                        original work)
+   - dist/firefox/1password-reborn-firefox-1p7.xpi
+                                       (the same, for 1Password 7, unsigned;
+                                        its add-on ID is the one of AgileBits'
+                                        own add-on)
    These are shipped verbatim from the freely-distributed 1Password extension.
    All rights reserved by the owner. "1Password" and "AgileBits" are trademarks
    of their owner. Redistributed here under the assumption of permissible reuse

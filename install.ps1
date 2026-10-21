@@ -1,5 +1,5 @@
 <#
-  install.ps1 - One-command installer for 1Password Reborn (Chrome, Windows).
+  install.ps1 - One-command installer for 1Password Reborn (Chrome and Firefox, Windows).
 
   Run it either way:
     * One command (no clone needed):
@@ -498,7 +498,7 @@ function Get-FirefoxInstalls {
 function Test-OP4Installed { return [bool](Test-Path 'HKCU:\Software\AgileBits\1Password 4') }
 
 function Resolve-FirefoxPlan {
-  # The decision table behind [4] Firefox (docs: Firefox design, section 5). Pure: no I/O.
+  # The decision table behind [4] Firefox Pure: no I/O.
   #   1Password 4 only              -> open-signed in a release/beta Firefox (else any)
   #   1Password 7 only, DevEd/Nightly/ESR -> open-unsigned there; release only -> needs-dev-edition
   #   both apps                     -> ask-app until -AppChoice is '4' or '7'

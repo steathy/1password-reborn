@@ -1,7 +1,7 @@
 'use strict';
 // Every committed release artifact advertises the same version as src/manifest.json: the
 // Chrome crx, dist/extension.json and dist/updates.xml (the force-install route), and the
-// Firefox updates.json plus the XPIs (the signed 1Password 4 one when present). A repack that
+// Firefox updates.json plus the XPIs (the Mozilla-signed 1Password 4 one, which AMO will not sign again). A repack that
 // leaves an update manifest behind would otherwise ship silently.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -26,9 +26,13 @@ test('crx, extension.json, updates.xml, Firefox updates.json and the XPIs all ca
     assert.deepEqual(entry.updates.map((u) => u.version), [want], id);
   }
   assert.equal(manifestVersionIn('dist', 'firefox', '1password-reborn-firefox-1p7.xpi'), want, '1p7 xpi');
-  if (fs.existsSync(path.join(ROOT, 'dist', 'firefox', '1password-reborn-firefox.xpi'))) {
-    assert.equal(manifestVersionIn('dist', 'firefox', '1password-reborn-firefox.xpi'), want, 'signed xpi');
-  }
+  // The signed 1Password 4 XPI is irreplaceable (AMO will not sign this version again): an
+  // unsigned rebuild copied over it must fail here.
+  const signed = read('dist', 'firefox', '1password-reborn-firefox.xpi');
+  assert.equal(manifestVersionIn('dist', 'firefox', '1password-reborn-firefox.xpi'), want, 'signed xpi');
+  const signedNames = Z.zipEntryNames(signed);
+  assert.ok(signedNames.includes('META-INF/mozilla.rsa'), 'signed xpi has META-INF/mozilla.rsa');
+  assert.ok(signedNames.includes('META-INF/cose.sig'), 'signed xpi has META-INF/cose.sig');
 });
 
 test('the updates.xml reader takes the <updatecheck> version, not the XML declaration', () => {
