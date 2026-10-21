@@ -50,6 +50,7 @@ It downloads this repo, then shows a menu:
 [1] Load unpacked   (recommended; works on any PC, no admin)
 [2] Force install   (no dev-mode nag, but ENTERPRISE-MANAGED devices only)
 [3] Uninstall       (remove force-install policy)
+[4] Firefox         (signed build for 1Password 4; unsigned build for 1Password 7)
 ```
 
 - **Load unpacked** (recommended) stages the files under
@@ -67,6 +68,9 @@ It downloads this repo, then shows a menu:
   shows it as `[BLOCKED]` with *"not detected as enterprise managed"*). The installer
   detects this and offers to switch you to load-unpacked. See
   [Force install on a personal PC](#force-install-on-a-personal-pc) below.
+- **Firefox** opens the right XPI in Firefox for you: the Mozilla-signed build if 1Password 4
+  is installed, the unsigned 1Password 7 build in Developer Edition, Nightly or ESR if only
+  1Password 7 is. See [Firefox](#firefox) below. Nothing is written to Firefox's profile.
 
 > `irm … | iex` runs remote code — review [`install.ps1`](install.ps1) first if you like.
 > The same script works from a local clone too: double-click **`install.bat`**.
@@ -75,6 +79,39 @@ It downloads this repo, then shows a menu:
 > directly from its folder (`%LOCALAPPDATA%\1Password-Reborn\src` or your clone) on
 > **every** browser launch — move or delete it and the extension disappears. To
 > remove it, use the browser's extensions page → Remove, then delete the folder.
+
+## Firefox
+
+Since 1.5.0 Reborn also ships for Firefox (140 or later), as two XPIs under
+[`dist/firefox/`](dist/firefox/). Same engine, same shims, same passkeys; the Firefox
+manifest lists the background files in the order Chrome imports them.
+
+| Build | For | Signed | Install |
+| --- | --- | --- | --- |
+| `1password-reborn-firefox.xpi` | 1Password 4 (pairs over its local WebSocket) | yes, by Mozilla (unlisted) | any Firefox 140+: open the file, click **Add** |
+| `1password-reborn-firefox-1p7.xpi` | 1Password 7 (native messaging; its host only allows AgileBits' extension ID) | no, Mozilla cannot sign another developer's ID | Developer Edition, Nightly or ESR with `xpinstall.signatures.required = false` in `about:config` |
+
+- **The install prompt lists data the extension handles**: authentication information,
+  browsing activity and website content. Mozilla requires every new extension to declare
+  this. For Reborn that data goes **only to your local 1Password app** on the same machine
+  (credentials to fill and save, the page URL to find matching items, the page's forms to
+  fill them). Nothing goes to any server or to the developer; there is no telemetry. The
+  retired "Report website issue" command of the original extension is disabled so that
+  stays true.
+- **Updates** come from this repo over https (`dist/firefox/updates.json`); Firefox checks
+  on its usual schedule, or use `about:addons` → gear → Check for Updates. The unsigned
+  build updates only where signature checking is off, which is already true where it runs.
+- **Remove** it in `about:addons`. The installer never edits Firefox's preferences.
+- The installer's **[4] Firefox** entry detects your Firefox channels and 1Password app and
+  opens the matching XPI; it explains the `about:config` step for the unsigned build.
+- **How it reaches 1Password 4:** 1Password 4 (2017) answers only browser extensions it
+  recognizes by origin, and a Firefox WebExtension is not one of them. So the extension
+  presents its own connection to 1Password 4 (`ws://127.0.0.1`, nothing else) under the
+  origin of AgileBits' original Firefox add-on, and keeps that local connection on plain
+  `ws://`, which Firefox would otherwise upgrade. That is why the Firefox manifests request
+  blocking request access and `ws://127.0.0.1` (Firefox lists it as "Access your data for
+  ws://127.0.0.1"); no other request is changed, and web pages cannot use it. Once paired, the engine encrypts what it sends over that connection.
+- Not covered: Firefox for Android, macOS and Linux, and enterprise-policy installs.
 
 ## Moving from 1password4-mv3
 
@@ -293,7 +330,8 @@ history is the undo.
 ```
 src/                    the loadable / packable MV3 extension
   manifest.json         MV3 manifest (keeps original key for dev)
-  sw-bootstrap.js       service-worker shims + import (hand-written, with passkeys/)
+  sw-bootstrap.js       Chrome entry point: imports bg/ and the engine
+  bg/                   background shims shared by Chrome and Firefox (before/after the engine)
   rules/                declarativeNetRequest rules (deep link + dead-page redirect)
   passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core)
   ext/tldts.min.js      public-suffix list (rpId validation), unmodified
@@ -303,10 +341,10 @@ src/                    the loadable / packable MV3 extension
   ext/sjcl.js           crypto library, unmodified
   fillStyle.css         content-script styles, unmodified
   assets/               icons
-build/                  pack.ps1 + compute-id.js (rebuild the crx; key.pem gitignored)
+build/                  pack.ps1 + compute-id.js (crx), pack-firefox.js (XPIs); key.pem gitignored
 tools/                  1pif-to-bitwarden.js (migrate passkeys to Bitwarden)
 tests/                  node --test suites for the pure passkey modules
-dist/                   committed install artifacts: signed crx + extension.json + updates.xml
+dist/                   committed install artifacts: signed crx + extension.json + updates.xml; firefox/ (two XPIs + updates.json)
 original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)
 seed-op4.ps1            first-run fix: set VerifyCodeSignature=0 (accept modern browsers)
@@ -333,10 +371,11 @@ Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4
 
 ## Known risks
 
-- **Service-worker lifetime.** The engine keeps the session and derived keys in
+- **Background lifetime (service worker on Chrome, event page on Firefox).** The engine keeps the session and derived keys in
   memory. A keep-alive holds the worker up while it runs; if the browser terminates
   it anyway, the next page navigation revives it and the engine reconnects
-  (re-handshake). Watch for reconnect churn in the console.
+  (re-handshake). Watch for reconnect churn in the console. Firefox unloads an idle event
+  page after about 30 s; in the 1.5.0 smoke test (Firefox 158) the keep-alive held it: after more than 5 minutes idle, fill still worked with no reconnect.
 - **`ws://127.0.0.1` from a service worker** is expected to work (extension origin
   is exempt from Private Network Access); confirm on your setup.
 - **Passkeys depend on two in-page clicks and the app's untagged popup reply.** See
@@ -357,7 +396,7 @@ Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4
 
 ## Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.4.0**.
+See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.5.0**.
 
 ## License
 

@@ -88,6 +88,10 @@ update it to 7.4.767 or later.
   The installer sets `VerifyCodeSignature=0` so modern Chrome works.
 - **1Password 7:** Chrome, Firefox, Vivaldi, Brave, Opera. **Edge needs 7.4.767 or later;**
   on older 7.x, use Chrome or update 1Password 7.
+- **Firefox with Reborn 1.5.0:** 1Password 4 users install the Mozilla-signed build in any
+  Firefox 140 or later. 1Password 7 users need Developer Edition, Nightly or ESR for the
+  unsigned build (its gecko ID is AgileBits', the only ID 1Password 7's Firefox host allows,
+  so Mozilla cannot sign it). See README → Firefox.
 - Other Chromium forks (SRWare Iron, Maxthon, TheWorld, Cent, …) are not supported by either
   app, because their signing publisher is not on the list — being Chromium-based is not
   enough.

@@ -5,6 +5,35 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
+## [1.5.0] - 2026-10-21
+
+### Added
+- **Firefox builds** (Firefox 140+): `dist/firefox/1password-reborn-firefox.xpi`, signed by
+  Mozilla (unlisted channel), for 1Password 4; `dist/firefox/1password-reborn-firefox-1p7.xpi`,
+  unsigned, for 1Password 7 (Developer Edition, Nightly or ESR). Same engine, same shims,
+  full passkey parity. Updates from GitHub via `dist/firefox/updates.json`.
+- Installer menu entry **[4] Firefox**: detects Firefox channels and the 1Password app,
+  opens the matching XPI, never edits Firefox's profile.
+- Firefox manifest declares what the extension handles (`data_collection_permissions`:
+  authentication info, browsing activity, website content), all of it sent only to the
+  local 1Password app.
+
+### Changed
+- Background code split into `src/bg/platform-shims.js` (before the engine) and
+  `src/bg/after-engine.js` (after it), shared by Chrome and Firefox; `sw-bootstrap.js` is
+  now Chrome's loader only. Bundled version **4.7.5.92** so force installs pick it up.
+- The engine's "Report website issue" command (which opened an agilebits.com report URL
+  with the page URL and browser details) is disabled; the endpoint is retired and Reborn is
+  local-only.
+- A `connectNative` wrapper presents Firefox's missing-native-host error as Chrome's so the
+  unchanged engine falls back to 1Password 4's WebSocket on Firefox.
+- On Firefox, the extension's own WebSocket to 1Password 4 is presented under the legacy
+  Firefox add-on's origin (`resource://onepassword-at-agilebits-dot-com`), the Firefox origin
+  1Password 4 knows, and the Firefox manifests opt out of the default CSP's
+  `upgrade-insecure-requests` so that local connection stays `ws://`. The Firefox manifests add
+  `webRequestBlocking` and `ws://127.0.0.1/*` for it; Chrome is unchanged.
+- `web-ext` 10.8.0 added as a devDependency (lint and packaging of the XPIs).
+
 ## [1.4.0] - 2026-10-14
 
 ### Changed
@@ -194,6 +223,7 @@ on 1Password 4.6.1.618 (Windows 10).
   native-messaging host on Windows, so the native-messaging attempt always falls
   back — cosmetic, no performance impact.
 
+[1.5.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.5.0
 [1.4.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.4.0
 [1.3.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.3.0
 [1.2.0]: https://github.com/steathy/1password-reborn/releases/tag/v1.2.0
