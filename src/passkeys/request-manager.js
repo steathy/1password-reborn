@@ -21,6 +21,7 @@
     const showPopup = deps.showPopup;
     const autosave = deps.autosave;
     const isConnected = deps.isConnected;
+    const isNativeApp = deps.isNativeApp || (() => false);
     const getActive = deps.getActive;
     const log = deps.log || function () {};
     const setT = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
@@ -125,6 +126,17 @@
       const n = userLabel(rec);
       return n ? '[Passkey] ' + siteName(rec) + ' - ' + n : '[Passkey] ' + siteName(rec);
     }
+    // 1Password 7 titles a manual save from collectedDocument.title, and its brain cuts a title
+    // that contains the site's own name down to that word (InferBestTitle). So the default
+    // 1Password 7 title leaves the site out (the item's website field names it); an edited title
+    // goes as typed. 1Password 4 titles from displayTitle and ignores this key. Titles compare
+    // without line breaks and outer spaces: the card's input drops line breaks, the save trims.
+    const normTitle = (s) => String(s).replace(/[\r\n]+/g, '').trim();
+    function app7Title(rec) {
+      if (normTitle(rec.title) !== normTitle(defaultTitle(rec))) return rec.title;
+      const n = normTitle(userLabel(rec));
+      return n ? '[Passkey] ' + n : '[Passkey]';
+    }
     function startCreate(rec) {
       const excluded = new Set((rec.options.excludeCredentials || [])
         .filter((c) => c && typeof c.id === 'string').map((c) => normId(c.id)));
@@ -156,7 +168,7 @@
       if (!isConnected()) return card(rec, 'not-connected');   // the app went away meanwhile: the copy stays, Done stays inert
       rec.created = made;                                // only now can Done succeed
       autosave(payload.login, payload.collectedDocument, payload.url);
-      card(rec, 'create-saving');
+      card(rec, 'create-saving', isNativeApp() ? { app7: true } : undefined);   // 1Password 7 preselects Update existing
     }
     function buildSavePayload(rec, made) {
       const p = made.passkey;
@@ -173,7 +185,7 @@
             ],
           },
         },
-        collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, forms: {}, fields: [
+        collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, title: app7Title(rec), forms: {}, fields: [
           { opid: '__0', elementNumber: 0, visible: true, viewable: true, htmlID: 'username', htmlName: 'username', type: 'text', value: p.userName, 'label-tag': 'username' },
           { opid: '__1', elementNumber: 1, visible: true, viewable: true, htmlID: 'passkey', htmlName: 'passkey', type: 'password', value: passkeyJson, 'label-tag': 'passkey' },
         ], collectedTimestamp: now() },

@@ -117,6 +117,9 @@
     // The engine's own connection state. OP.toolbarButtonEnabled is NOT it: the engine sets
     // that flag to true unconditionally at startup, connected or not.
     isConnected: () => Agent.isConnected() === true,
+    // 1Password 7 is the only app that connects by native messaging (1Password 4 uses the
+    // WebSocket). The engine exports the class and keeps its current connection in Agent.c.
+    isNativeApp: () => typeof self.NativeMessagingConnection === 'function' && Agent.c instanceof self.NativeMessagingConnection,
     getActive,
     log: (level, ...args) => (level === 'error' ? console.error : console.warn)(TAG, ...args),
   });

@@ -54,6 +54,7 @@ function harness(opts = {}) {
     showPopup: (url) => calls.showPopup.push(url),
     autosave: (login, doc, url) => calls.autosave.push({ login, doc, url }),
     isConnected: () => connected,
+    isNativeApp: () => opts.nativeApp === true,
     getActive: () => active,
     setTimeout: (fn, ms) => { const h = { fn, ms, cleared: false }; timers.push(h); return h; },
     clearTimeout: (h) => { if (h) h.cleared = true; },
@@ -85,8 +86,9 @@ test('create: prompt, Save, autosave payload, Done, credential; never a popup ow
     [['username', 'T', 'username'], ['passkey', 'P', undefined]]);
   assert.equal(login.secureContents.fields[0].value, 'alice@example.com');
   assert.equal((await A.decodePasskeyField(login.secureContents.fields[1].value)).rpId, 'example.com');
-  assert.deepEqual(Object.keys(doc).sort(), ['collectedTimestamp', 'displayTitle', 'documentUUID', 'fields', 'forms', 'url']);
+  assert.deepEqual(Object.keys(doc).sort(), ['collectedTimestamp', 'displayTitle', 'documentUUID', 'fields', 'forms', 'title', 'url']);
   assert.equal(doc.displayTitle, '[Passkey] GitHub - Alice');
+  assert.equal(doc.title, '[Passkey] GitHub - Alice');               // an edited title goes to 1Password 7 as typed
   assert.deepEqual(doc.fields.map((f) => [f.opid, f.elementNumber, f.htmlID, f.htmlName, f.type, f['label-tag'], f.visible, f.viewable]), [['__0', 0, 'username', 'username', 'text', 'username', true, true], ['__1', 1, 'passkey', 'passkey', 'password', 'passkey', true, true]]);
   assert.equal(doc.fields[0].value, 'alice@example.com');
   assert.equal(doc.fields[1].value, login.secureContents.fields[1].value);
@@ -118,6 +120,9 @@ test('create: default title without a display name; credProps extension echoed',
   await until(() => h.calls.autosave.length === 1, 'autosave');
   assert.equal(h.calls.autosave[0].login.overview.title, '[Passkey] Example - alice@example.com');
   assert.equal(h.calls.autosave[0].doc.displayTitle, '[Passkey] Example - alice@example.com');
+  // 1Password 7 is sent the title without the site (1Password 7 itself still shortens this one to
+  // "example": the name contains the site label; README documents it)
+  assert.equal(h.calls.autosave[0].doc.title, '[Passkey] alice@example.com');
   p.emit({ type: 'approve', id: 'c1', stage: 'saving' });
   assert.deepEqual(p.last('reply').credential.clientExtensionResults, { credProps: { rk: true } });
 });
@@ -488,4 +493,41 @@ test('get: Yes with the app connection gone shows not-connected; no popup, no ow
   assert.equal(h.m.getState().owner, null);
   p.emit({ type: 'decline', id: 'g1', how: 'fallback' });
   assert.equal(p.last('reply').fallback, true);
+});
+
+
+test('create: the default title goes to 1Password 7 without the site name; 1Password 4 keeps it', async () => {
+  const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'c7', kind: 'create', options: createOptions() });
+  const def = p.last('card').card.defaultTitle;
+  assert.equal(def, '[Passkey] Example - Alice');
+  p.emit({ type: 'approve', id: 'c7', stage: 'prompt', title: def });
+  await until(() => h.calls.autosave.length === 1, 'autosave');
+  const { login, doc } = h.calls.autosave[0];
+  assert.equal(doc.title, '[Passkey] Alice');
+  assert.equal(doc.displayTitle, '[Passkey] Example - Alice');
+  assert.equal(login.overview.title, '[Passkey] Example - Alice');
+  // The untouched default still counts as the default when the site's name has outer spaces
+  // (the save trims the title), and a site that gives no name yields '[Passkey]'.
+  const cases = [
+    [{ id: A.b64url.encode(Uint8Array.from([4])), name: 'alice@example.com', displayName: 'Alice ' }, '[Passkey] Alice'],
+    [{ id: A.b64url.encode(Uint8Array.from([5])), name: '', displayName: '' }, '[Passkey]'],
+  ];
+  for (const [user, want] of cases) {
+    const h2 = harness(); const p2 = makePort(2, { id: 2, windowId: 10 }); h2.m.onConnect(p2);
+    p2.emit({ type: 'request', id: 'c8', kind: 'create', options: createOptions({ user }) });
+    p2.emit({ type: 'approve', id: 'c8', stage: 'prompt', title: p2.last('card').card.defaultTitle });
+    await until(() => h2.calls.autosave.length === 1, 'autosave ' + want);
+    assert.equal(h2.calls.autosave[0].doc.title, want);
+  }
+});
+
+test('create: the saving card carries the 1Password 7 note only with a native-messaging app', async () => {
+  for (const nativeApp of [true, false]) {
+    const h = harness({ nativeApp }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'n1', kind: 'create', options: createOptions() });
+    p.emit({ type: 'approve', id: 'n1', stage: 'prompt', title: '' });
+    await until(() => p.state() === 'create-saving', 'saving card');
+    assert.equal(p.last('card').card.app7, nativeApp ? true : undefined, String(nativeApp));
+  }
 });

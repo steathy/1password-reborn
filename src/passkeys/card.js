@@ -19,6 +19,7 @@
     '.row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}',
     'button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid #c9c9d1;background:#f4f4f6;cursor:pointer}',
     'button[data-action=approve]{background:#0a66c2;border-color:#0a66c2;color:#fff}',
+    '.note{background:#fff8e1;border-left:3px solid #e0a100;color:#3f3a2a;padding:6px 8px;border-radius:4px;margin-bottom:10px}',
   ].join('');
 
   // [action, label, approvedStage?]
@@ -27,7 +28,11 @@
       buttons: [['approve', 'Save in 1Password', 'prompt'], ['fallback', 'Use another way']] }),
     'create-excluded': (d) => ({ title: '1Password already has a passkey for this account.', body: d.site,
       buttons: [['fallback', 'Use another way'], ['cancel', 'Cancel']] }),
-    'create-saving': () => ({ title: 'Confirm the save in the 1Password window, then click Done.',
+    // With 1Password 7 (d.app7) a note: its save window preselects Update existing whenever the
+    // site already has a login. Note segments are [text, bold].
+    'create-saving': (d) => ({ title: 'Confirm the save in the 1Password window, then click Done.',
+      note: d.app7 ? [['Choose ', false], ['Create New', true], [' there. ', false], ['Update existing', true],
+        [" would replace an existing login's password with this passkey.", false]] : undefined,
       buttons: [['approve', 'Done', 'saving'], ['cancel', 'Cancel']] }),
     'get-prompt': (d) => ({ title: 'Use a passkey saved in 1Password?', body: d.site,
       buttons: [['approve', 'Yes', 'prompt'], ['fallback', 'Use another way']] }),
@@ -67,6 +72,14 @@
       const brand = doc.createElement('div'); brand.className = 'brand'; brand.textContent = '1Password passkeys'; box.appendChild(brand);
       const h = doc.createElement('div'); h.className = 'title'; h.textContent = spec.title; box.appendChild(h);
       if (spec.body) { const b = doc.createElement('div'); b.className = 'body'; b.textContent = spec.body; box.appendChild(b); }
+      if (spec.note) {
+        const n = doc.createElement('div'); n.className = 'note';
+        spec.note.forEach(([text, bold]) => {
+          if (!bold) { n.appendChild(doc.createTextNode(text)); return; }
+          const el = doc.createElement('b'); el.textContent = text; n.appendChild(el);
+        });
+        box.appendChild(n);
+      }
       if (spec.input !== undefined) {
         input = doc.createElement('input'); input.type = 'text'; input.value = spec.input;
         input.setAttribute('aria-label', 'Item title'); input.maxLength = 120; box.appendChild(input);

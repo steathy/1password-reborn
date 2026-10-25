@@ -34,6 +34,12 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
   `webRequestBlocking` and `ws://127.0.0.1/*` for it; Chrome is unchanged.
 - `web-ext` 10.8.0 added as a devDependency (lint and packaging of the XPIs).
 
+### Fixed
+- Passkeys with 1Password 7 (since 1.4.0, in Chrome and Firefox): the app's save window now
+  proposes `[Passkey] <name>` instead of the bare site name, and the card tells you to choose
+  **Create New** there (1Password 7 preselects Update existing whenever the site already has a
+  login). 1Password 4 is unchanged.
+
 ## [1.4.0] - 2026-10-14
 
 ### Changed

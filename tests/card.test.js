@@ -131,3 +131,17 @@ test('card renders as a full-viewport modal with a centered box', () => {
   assert.deepEqual(t.calls.decline, []);
   assert.equal(t.card.state, 'create-prompt');
 });
+
+
+test('the saving card shows the Create New note only for 1Password 7', () => {
+  const { card } = setup();
+  card.show('create-saving', { app7: true });
+  const note = card._root.querySelector('.note');
+  assert.ok(note, 'note rendered');
+  assert.deepEqual(Array.from(note.querySelectorAll('b')).map((b) => b.textContent), ['Create New', 'Update existing']);
+  assert.equal(note.textContent, "Choose Create New there. Update existing would replace an existing login's password with this passkey.");
+  assert.deepEqual(buttons(card), ['Done', 'Cancel']);
+  card.show('create-saving');
+  assert.equal(card._root.querySelector('.note'), null);
+  assert.deepEqual(buttons(card), ['Done', 'Cancel']);
+});
