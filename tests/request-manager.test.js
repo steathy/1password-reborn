@@ -81,7 +81,7 @@ test('create: prompt, Save, autosave payload, Done, credential; never a popup ow
   const { login, doc, url } = h.calls.autosave[0];
   assert.equal(url, PAGE);
   assert.equal(login.type_name, 'webforms.WebForm');
-  assert.deepEqual(login.overview, { title: '[Passkey] GitHub - Alice', location: PAGE });
+  assert.deepEqual(login.overview, { title: '[Passkey] GitHub - Alice', location: PAGE, tags: ['passkey'] });
   assert.deepEqual(login.secureContents.fields.map((f) => [f.name, f.type, f.designation]),
     [['username', 'T', 'username'], ['passkey', 'P', undefined]]);
   assert.equal(login.secureContents.fields[0].value, 'alice@example.com');
@@ -89,7 +89,7 @@ test('create: prompt, Save, autosave payload, Done, credential; never a popup ow
   assert.deepEqual(Object.keys(doc).sort(), ['collectedTimestamp', 'displayTitle', 'documentUUID', 'fields', 'forms', 'title', 'url']);
   assert.equal(doc.displayTitle, '[Passkey] GitHub - Alice');
   assert.equal(doc.title, '[Passkey] GitHub - Alice');               // an edited title goes to 1Password 7 as typed
-  assert.deepEqual(doc.fields.map((f) => [f.opid, f.elementNumber, f.htmlID, f.htmlName, f.type, f['label-tag'], f.visible, f.viewable]), [['__0', 0, 'username', 'username', 'text', 'username', true, true], ['__1', 1, 'passkey', 'passkey', 'password', 'passkey', true, true]]);
+  assert.deepEqual(doc.fields.map((f) => [f.opid, f.elementNumber, f.htmlID, f.htmlName, f.type, f['label-tag'], f.visible, f.viewable, f.userEdited]), [['__0', 0, 'username', 'username', 'text', 'username', true, true, true], ['__1', 1, 'passkey', 'passkey', 'password', 'passkey', true, true, true]]);
   assert.equal(doc.fields[0].value, 'alice@example.com');
   assert.equal(doc.fields[1].value, login.secureContents.fields[1].value);
   assert.equal(h.calls.recoveryPut.length, 1);

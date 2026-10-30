@@ -288,15 +288,13 @@ dimmed page:
   as Password (also in 1Password 7 on the iPhone) and keeps replaced values in password
   history. Do not copy that password or let another 1Password client fill it; it is the
   passkey's private key. This extension never types it into a page.
-- **With 1Password 7** its save window needs two things from you. It proposes the title
-  `[Passkey] <name>`: 1Password 7 shortens any title that contains the site's name to that
-  one word, so the extension leaves the site out (the item's website names it). And it
-  preselects **Update existing** whenever the site already has a login: choose **Create New**
-  instead, and check that it is still selected when you click Save (1Password 7 can switch
-  back to Update existing while the window is open). The card reminds you while that window
-  is open. If your account name contains the site's name (an e-mail address at that site, for
-  example) or you typed the site's name into the title yourself, 1Password 7 still shortens
-  the title; correct it in its window before you save.
+- **With 1Password 7** its save window needs two things from you. It preselects **Update
+  existing** whenever the site already has a login: choose **Create New** instead, and check
+  that it is still selected when you click Save (1Password 7 can switch back to Update existing
+  while the window is open). The card reminds you while that window is open. And it chooses
+  the title itself: 1Password 7.9 names the item after the site (for example `Webauthn`), and
+  1Password 7.3 proposes `[Passkey] <name>` (shortened to the site's name if the title
+  contains it). Type the title and any tags you want in its window before you save.
 - **Sign in:** pick the item in the 1Password popup, then click **Sign in** on the card.
   That second click is required: the app's reply carries no request token, so the
   click is what ties the chosen item to the requesting page. On 1Password 4.6.1 the app

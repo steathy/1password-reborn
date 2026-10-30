@@ -35,10 +35,12 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
 - `web-ext` 10.8.0 added as a devDependency (lint and packaging of the XPIs).
 
 ### Fixed
-- Passkeys with 1Password 7 (since 1.4.0, in Chrome and Firefox): the app's save window now
-  proposes `[Passkey] <name>` instead of the bare site name, and the card tells you to choose
-  **Create New** there (1Password 7 preselects Update existing whenever the site already has a
-  login). 1Password 4 is unchanged.
+- Passkeys with 1Password 7 (since 1.4.0, in Chrome and Firefox): with 1Password 7.9 the saved
+  login held no passkey, so it could not sign in; the passkey is now saved as the login's
+  password, as with 1Password 7.3. The card tells you to choose **Create New** in 1Password 7's
+  save window (it preselects Update existing whenever the site already has a login), and
+  1Password 7.3 proposes `[Passkey] <name>` instead of the bare site name. 1Password 4 is
+  unchanged.
 
 ## [1.4.0] - 2026-10-14
 
