@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
-## [1.5.0] - 2026-10-21
+## [1.5.0] - 2026-10-31
 
 ### Added
 - **Firefox builds** (Firefox 140+): `dist/firefox/1password-reborn-firefox.xpi`, signed by

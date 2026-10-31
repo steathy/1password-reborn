@@ -10,7 +10,9 @@ This matters because 1Password 4 and 7 (the apps this extension pairs with) are
 discontinued, so their lists are frozen in time. The lists below were read from the app
 binaries on this project's reference machine (1Password 4.6.1.618; 1Password 7.3.657,
 7.4.767, 7.9.836). They describe the **app's** behaviour and are the same for the original
-extension and for Reborn.
+extension and for Reborn. 1Password 7.9.835 and later refuse this extension altogether,
+whatever the browser, so the 7.4.767+ column applies up to 7.9.834 (see the README's
+Compatibility note).
 
 ## Trusted publishers per app version
 

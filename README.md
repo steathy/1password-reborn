@@ -15,7 +15,8 @@ pairs with the **1Password 4–7 desktop apps**, the generation that still suppo
 Dropbox vaults — ported to Manifest V3 and extended with **passkeys**, which the classic
 extension never had. The original extension still loads in browsers that accept Manifest
 V2 (Vivaldi, older Edge) but stopped loading in Chrome after the MV2 sunset. Reborn loads
-and works in any current **Chromium** browser — **Chrome, Edge, Brave,** and the like.
+and works in any current **Chromium** browser — **Chrome, Edge, Brave,** and the like — and,
+since 1.5.0, in **Firefox 140+** (see [Firefox](#firefox)).
 (This README says "the browser" generically; use whichever you like.)
 
 It talks to the **unmodified** desktop app over the same two transports the
@@ -25,12 +26,16 @@ original used — native messaging (`2bua8c4s2c.com.agilebits.1password`) and a
 > **Compatibility** (the extension↔app protocol is the same across these apps; what is
 > verified is listed per app):
 > - **1Password 4 for Windows** (4.6.1.618, Windows 10): verified, including passkeys, in
->   Chrome and Edge.
-> - **1Password 7 for Windows**: passwords and passkeys work in Chrome (verified on 7.3.657,
->   fresh VM). 7.3.657 **refuses Edge** — its built-in browser signer list predates the
->   Chromium Edge and has no Microsoft entry; 1Password 7.4 added it, so **Edge works from
->   7.4.767 or later** (verified). 1Password 7 has no code-signature switch; update it or use
->   Chrome. Early use, not yet long-term tested.
+>   Chrome and Edge, and in Firefox 158 and 159 with the signed build.
+> - **1Password 7 for Windows**: passwords and passkeys work in Chrome and, with the unsigned
+>   build, in Firefox ESR or Developer Edition (verified on 7.3.657 and 7.9.834). **7.9.834 is
+>   the last release that serves this extension**: 1Password 7.9.835 and later refuse it
+>   ("1Password Classic is no longer supported"). Install 1Password 7 with its setup program:
+>   that registers the browser connection, a copied app folder does not. 7.3.657 **refuses
+>   Edge** — its built-in browser signer list predates the Chromium Edge and has no Microsoft
+>   entry; 1Password 7.4 added it, so **Edge works from 7.4.767 or later** (verified).
+>   1Password 7 has no code-signature switch; update it or use Chrome. Early use, not yet
+>   long-term tested.
 > - **1Password 6**: untested.
 > - Which browsers each app version pairs with — and why Chromium forks such as SRWare Iron,
 >   Maxthon or Yandex may be refused — is in [`BROWSERS.md`](BROWSERS.md). It is the browser's
@@ -217,9 +222,12 @@ force-install. (Faking Windows MDM/domain state in the registry also works but i
 invasive and not recommended.) If you'd rather not, just use **load-unpacked** — it
 does the same job with a dismissable startup bubble.
 
-No `allowed_origins` / native-messaging step is needed — on Windows the extension
-connects over `ws://127.0.0.1`, which authenticates by pairing secret, not by
-extension ID.
+With **1Password 4** no `allowed_origins` / native-messaging step is needed — on Windows the
+extension connects over `ws://127.0.0.1`, which authenticates by pairing secret, not by
+extension ID. With **1Password 7**, use load-unpacked instead: 1Password 7 connects only by
+native messaging, and its host admits only the extension IDs it lists, which include the
+unpacked ID (`phicbbndgmmpogmijjkbmdhpioaieaha`) but not the force-install ID
+(`mmfoigkanhpccidpokhjnomdcmgmjomj`).
 
 **Uninstall:** menu option 3, or run [`uninstall.ps1`](uninstall.ps1).
 
@@ -376,11 +384,14 @@ in browsers that still accept Manifest V2 (e.g. current Vivaldi). The MV3 port i
 
 ## Status
 
-**Working.** Runs in current Chromium browsers (verified in **Chrome and Edge**)
-against 1Password 4 on Windows (tested 4.6.1.618): the service worker connects,
+**Working.** Runs in current Chromium browsers (verified in **Chrome and Edge**) and in
+Firefox 140+ against 1Password 4 on Windows (tested 4.6.1.618): the service worker connects,
 first-run pairing self-completes (no dead page), and fill/save work. Each browser
 pairs under its own extension ID, so they run concurrently.
 Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4.6.1 in Edge 155.
+Firefox (1.5.0): fill, save and passkeys verified in Firefox 158 and 159 against 1Password 4.6.1
+with the signed build; the 1Password 7 build verified on the VM in Firefox ESR / Developer
+Edition with 1Password 7.3.657 and 7.9.834.
 
 ## Known risks
 
