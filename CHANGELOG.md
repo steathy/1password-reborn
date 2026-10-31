@@ -21,7 +21,7 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
 ### Changed
 - Background code split into `src/bg/platform-shims.js` (before the engine) and
   `src/bg/after-engine.js` (after it), shared by Chrome and Firefox; `sw-bootstrap.js` is
-  now Chrome's loader only. Bundled version **4.7.5.92** so force installs pick it up.
+  now Chrome's loader only. Bundled version **4.7.5.93** so force installs pick it up.
 - The engine's "Report website issue" command (which opened an agilebits.com report URL
   with the page URL and browser details) is disabled; the endpoint is retired and Reborn is
   local-only.

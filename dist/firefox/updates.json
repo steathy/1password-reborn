@@ -3,7 +3,7 @@
     "1password-reborn@steathy.github.io": {
       "updates": [
         {
-          "version": "4.7.5.92",
+          "version": "4.7.5.93",
           "update_link": "https://raw.githubusercontent.com/steathy/1password-reborn/main/dist/firefox/1password-reborn-firefox.xpi"
         }
       ]
@@ -11,7 +11,7 @@
     "onepassword4@agilebits.com": {
       "updates": [
         {
-          "version": "4.7.5.92",
+          "version": "4.7.5.93",
           "update_link": "https://raw.githubusercontent.com/steathy/1password-reborn/main/dist/firefox/1password-reborn-firefox-1p7.xpi"
         }
       ]
