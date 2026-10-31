@@ -97,10 +97,9 @@
     const nowMs = opts.now || (() => Date.now());
     const writeClipboard = opts.writeClipboard || defaultWriteClipboard;
 
-    // The page's clipboard API; else a temporary textarea inside the shadow root and execCommand.
-    function defaultWriteClipboard(text) {
-      const nav = doc.defaultView && doc.defaultView.navigator;
-      if (nav && nav.clipboard && nav.clipboard.writeText) return nav.clipboard.writeText(text);
+    // The page's clipboard API; a temporary textarea inside the shadow root and execCommand when
+    // that is missing, throws or is refused.
+    function execCopy(text) {
       return new Promise((resolve, reject) => {
         const ta = doc.createElement('textarea');
         ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
@@ -110,6 +109,13 @@
         shadow.removeChild(ta);
         if (ok) resolve(); else reject(new Error('copy failed'));
       });
+    }
+    function defaultWriteClipboard(text) {
+      const nav = doc.defaultView && doc.defaultView.navigator;
+      if (nav && nav.clipboard && nav.clipboard.writeText) {
+        try { return Promise.resolve(nav.clipboard.writeText(text)).catch(() => execCopy(text)); } catch (e) { /* fall through */ }
+      }
+      return execCopy(text);
     }
 
     const host = doc.createElement('op4-passkeys-card');
@@ -172,9 +178,11 @@
       });
       t.addEventListener('keydown', (ev) => {
         if (!editing || !isTrusted(ev)) return;
+        if (ev.isComposing) return;            // Enter that confirms an input-method composition
         if (ev.key !== 'Enter' && ev.key !== 'Escape') return;
         ev.preventDefault(); ev.stopPropagation();
         endEdit(ev.key === 'Enter');
+        editBtn.focus();                       // contenteditable is gone: keep focus inside the note
       });
       t.addEventListener('blur', () => { if (editing) endEdit(true); });
       copyBtn.addEventListener('click', (ev) => {

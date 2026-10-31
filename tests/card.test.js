@@ -148,8 +148,8 @@ test('the saving card shows the Create New note only for 1Password 7', () => {
 
 const rowButtons = (card) => Array.from(card._root.querySelectorAll('.row button'));
 const T = '[Passkey] GitHub - Alice';
-function key(dom, el, k) {
-  const ev = new dom.window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+function key(dom, el, k, extra = {}) {
+  const ev = new dom.window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra });
   el.dispatchEvent(ev);
   return ev;
 }
@@ -194,10 +194,18 @@ test('editing the proposed title: trusted only, Done and Cancel disabled, Enter 
   assert.ok(rowButtons(card).every((b) => b.disabled));
   assert.equal(edit.getAttribute('aria-label'), 'Keep change');
   advance(1000);
-  button(card, 'Done').click();
-  assert.equal(calls.approve.length, 0, 'Done ignored while editing');
+  const doneBtn = button(card, 'Done');
+  doneBtn.disabled = false;                 // a disabled button dispatches nothing: test the handler's own guard
+  doneBtn.click();
+  doneBtn.disabled = true;
+  assert.equal(calls.approve.length, 0, 'Done ignored while editing (guard)');
+  t.textContent = 'composing';
+  const ime = key(dom, t, 'Enter', { isComposing: true });
+  assert.equal(ime.defaultPrevented, false);
+  assert.ok(pt.classList.contains('editing'), 'IME Enter keeps editing');
   t.textContent = '  [Passkey] edited\n ';
   const ev = key(dom, t, 'Enter');
+  assert.equal(card._root.activeElement, edit, 'focus returns to the edit button');
   assert.equal(ev.defaultPrevented, true);
   assert.equal(t.textContent, '[Passkey] edited');
   assert.equal(t.hasAttribute('contenteditable'), false);
@@ -207,14 +215,17 @@ test('editing the proposed title: trusted only, Done and Cancel disabled, Enter 
 
   edit.click(); t.textContent = 'changed'; key(dom, t, 'Escape');
   assert.equal(t.textContent, '[Passkey] edited');
+  assert.equal(card._root.activeElement, edit, 'focus returns after Escape');
   assert.equal(pt.classList.contains('editing'), false);
 
   edit.click(); t.textContent = '   '; key(dom, t, 'Enter');
   assert.equal(t.textContent, '[Passkey] edited');
 
   edit.click(); t.textContent = 'x'.repeat(130);
+  edit.blur();
   t.dispatchEvent(new dom.window.Event('blur'));
   assert.equal(t.textContent.length, 120);
+  assert.notEqual(card._root.activeElement, edit, 'a blur-initiated end does not steal focus');
 
   button(card, 'Done').click();
   assert.deepEqual(calls.approve.map((a) => a[0]), ['saving']);
@@ -241,4 +252,20 @@ test('copying the proposed title: trusted only, current or live text, success st
   copy.click();
   assert.equal(rec[1], 'live title');
   assert.ok(card._root.querySelector('.ptitle').classList.contains('editing'));
+
+  // default writeClipboard: falls back to execCommand when writeText rejects or throws
+  for (const mode of ['rejects', 'throws']) {
+    const f = setup({ isTrusted: () => true });
+    Object.defineProperty(f.dom.window.navigator, 'clipboard', { configurable: true, value: {
+      writeText: () => (mode === 'throws' ? (() => { throw new Error('denied'); })() : Promise.reject(new Error('denied'))) } });
+    const copied = [];
+    f.doc.execCommand = (cmd) => { copied.push([cmd, f.card._root.querySelector('textarea').value]); return true; };
+    f.card.show('create-saving', { app7: true, title: T });
+    const b = f.card._root.querySelector('.copy');
+    b.click();
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    assert.deepEqual(copied, [['copy', T]], mode);
+    assert.ok(b.classList.contains('done'), mode);
+    assert.equal(f.card._root.querySelector('textarea'), null, 'temporary textarea removed');
+  }
 });
