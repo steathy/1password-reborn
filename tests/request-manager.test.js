@@ -529,5 +529,6 @@ test('create: the saving card carries the 1Password 7 note only with a native-me
     p.emit({ type: 'approve', id: 'n1', stage: 'prompt', title: '' });
     await until(() => p.state() === 'create-saving', 'saving card');
     assert.equal(p.last('card').card.app7, nativeApp ? true : undefined, String(nativeApp));
+    assert.equal(p.last('card').card.title, nativeApp ? '[Passkey] Example - Alice' : undefined, String(nativeApp));
   }
 });

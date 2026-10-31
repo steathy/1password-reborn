@@ -145,3 +145,100 @@ test('the saving card shows the Create New note only for 1Password 7', () => {
   assert.equal(card._root.querySelector('.note'), null);
   assert.deepEqual(buttons(card), ['Done', 'Cancel']);
 });
+
+const rowButtons = (card) => Array.from(card._root.querySelectorAll('.row button'));
+const T = '[Passkey] GitHub - Alice';
+function key(dom, el, k) {
+  const ev = new dom.window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+  el.dispatchEvent(ev);
+  return ev;
+}
+
+test('the 1Password 7 saving card shows the proposed title with edit and copy buttons', () => {
+  const { card } = setup();
+  card.show('create-saving', { app7: true, title: T });
+  const pt = card._root.querySelector('.ptitle');
+  assert.ok(pt, 'title note rendered');
+  assert.equal(pt.previousElementSibling.className, 'note');
+  assert.ok(pt.previousElementSibling.textContent.startsWith('Choose Create New'));
+  assert.equal(pt.nextElementSibling.className, 'row');
+  assert.ok(pt.querySelector('.head').textContent.startsWith('Proposed title:'));
+  assert.equal(pt.querySelector('.t').textContent, T);
+  assert.ok(pt.querySelector('button[aria-label="Edit title"]'));
+  assert.ok(pt.querySelector('button[aria-label="Copy title"]'));
+  assert.deepEqual(rowButtons(card).map((b) => b.textContent), ['Done', 'Cancel']);
+  assert.ok(rowButtons(card).every((b) => !b.disabled));
+  card.show('create-saving', { app7: true });
+  assert.equal(card._root.querySelector('.ptitle'), null);
+  card.show('create-saving', { app7: true, title: '' });
+  assert.equal(card._root.querySelector('.ptitle'), null);
+  card.show('create-saving', { title: 'x' });
+  assert.equal(card._root.querySelector('.ptitle'), null);
+});
+
+test('editing the proposed title: trusted only, Done and Cancel disabled, Enter keeps, Escape restores', () => {
+  const untrusted = setup();
+  untrusted.card.show('create-saving', { app7: true, title: T });
+  untrusted.card._root.querySelector('.edit').click();
+  assert.equal(untrusted.card._root.querySelector('.ptitle').classList.contains('editing'), false);
+  assert.equal(untrusted.card._root.querySelector('.t').hasAttribute('contenteditable'), false);
+
+  const { dom, card, calls, advance } = setup({ isTrusted: () => true });
+  card.show('create-saving', { app7: true, title: T });
+  const pt = card._root.querySelector('.ptitle');
+  const t = card._root.querySelector('.t');
+  const edit = card._root.querySelector('.edit');
+  edit.click();
+  assert.equal(t.getAttribute('contenteditable'), 'plaintext-only');
+  assert.ok(pt.classList.contains('editing'));
+  assert.ok(rowButtons(card).every((b) => b.disabled));
+  assert.equal(edit.getAttribute('aria-label'), 'Keep change');
+  advance(1000);
+  button(card, 'Done').click();
+  assert.equal(calls.approve.length, 0, 'Done ignored while editing');
+  t.textContent = '  [Passkey] edited\n ';
+  const ev = key(dom, t, 'Enter');
+  assert.equal(ev.defaultPrevented, true);
+  assert.equal(t.textContent, '[Passkey] edited');
+  assert.equal(t.hasAttribute('contenteditable'), false);
+  assert.equal(pt.classList.contains('editing'), false);
+  assert.ok(rowButtons(card).every((b) => !b.disabled));
+  assert.equal(edit.getAttribute('aria-label'), 'Edit title');
+
+  edit.click(); t.textContent = 'changed'; key(dom, t, 'Escape');
+  assert.equal(t.textContent, '[Passkey] edited');
+  assert.equal(pt.classList.contains('editing'), false);
+
+  edit.click(); t.textContent = '   '; key(dom, t, 'Enter');
+  assert.equal(t.textContent, '[Passkey] edited');
+
+  edit.click(); t.textContent = 'x'.repeat(130);
+  t.dispatchEvent(new dom.window.Event('blur'));
+  assert.equal(t.textContent.length, 120);
+
+  button(card, 'Done').click();
+  assert.deepEqual(calls.approve.map((a) => a[0]), ['saving']);
+});
+
+test('copying the proposed title: trusted only, current or live text, success state', async () => {
+  const rec = [];
+  const writeClipboard = (text) => { rec.push(text); return Promise.resolve(); };
+  const u = setup({ writeClipboard });
+  u.card.show('create-saving', { app7: true, title: T });
+  u.card._root.querySelector('.copy').click();
+  assert.equal(rec.length, 0);
+
+  const { card } = setup({ isTrusted: () => true, writeClipboard });
+  card.show('create-saving', { app7: true, title: T });
+  const copy = card._root.querySelector('.copy');
+  copy.click();
+  assert.deepEqual(rec, [T]);
+  await Promise.resolve(); await Promise.resolve();
+  assert.ok(copy.classList.contains('done'));
+  assert.equal(copy.getAttribute('title'), 'Copied');
+  card._root.querySelector('.edit').click();
+  card._root.querySelector('.t').textContent = 'live title';
+  copy.click();
+  assert.equal(rec[1], 'live title');
+  assert.ok(card._root.querySelector('.ptitle').classList.contains('editing'));
+});

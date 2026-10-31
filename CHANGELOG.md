@@ -38,9 +38,10 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
 - Passkeys with 1Password 7 (since 1.4.0, in Chrome and Firefox): with 1Password 7.9 the saved
   login held no passkey, so it could not sign in; the passkey is now saved as the login's
   password, as with 1Password 7.3. The card tells you to choose **Create New** in 1Password 7's
-  save window (it preselects Update existing whenever the site already has a login), and
-  1Password 7.3 proposes `[Passkey] <name>` instead of the bare site name. 1Password 4 is
-  unchanged.
+  save window (it preselects Update existing whenever the site already has a login) and shows
+  the proposed title with buttons to edit and copy it, since 1Password 7.9 names the item after
+  the site; 1Password 7.3 proposes `[Passkey] <name>` instead of the bare site name. 1Password 4
+  is unchanged.
 
 ## [1.4.0] - 2026-10-14
 

@@ -294,7 +294,8 @@ dimmed page:
   while the window is open). The card reminds you while that window is open. And it chooses
   the title itself: 1Password 7.9 names the item after the site (for example `Webauthn`), and
   1Password 7.3 proposes `[Passkey] <name>` (shortened to the site's name if the title
-  contains it). Type the title and any tags you want in its window before you save.
+  contains it). Type the title and any tags you want in its window before you save: the card
+  shows the proposed title, with buttons to edit and copy it, so you can paste it there.
 - **Sign in:** pick the item in the 1Password popup, then click **Sign in** on the card.
   That second click is required: the app's reply carries no request token, so the
   click is what ties the chosen item to the requesting page. On 1Password 4.6.1 the app

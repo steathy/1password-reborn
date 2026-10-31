@@ -168,7 +168,7 @@
       if (!isConnected()) return card(rec, 'not-connected');   // the app went away meanwhile: the copy stays, Done stays inert
       rec.created = made;                                // only now can Done succeed
       autosave(payload.login, payload.collectedDocument, payload.url);
-      card(rec, 'create-saving', isNativeApp() ? { app7: true } : undefined);   // 1Password 7 preselects Update existing
+      card(rec, 'create-saving', isNativeApp() ? { app7: true, title: rec.title } : undefined);   // 1Password 7 preselects Update existing and names the item after the site
     }
     function buildSavePayload(rec, made) {
       const p = made.passkey;
