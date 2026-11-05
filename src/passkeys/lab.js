@@ -73,9 +73,20 @@
     if (LAB_VALUE.test(v) || PAGE_OPID.test(v) || FS.MARKER_OPIDS.includes(v)) return v;
     return '<' + v.length + ' chars>';
   }
+  // Any op shape: arrays ["fill_by_opid", opid, value] and objects such as {operation, parameters}
+  // or {action, values} (1Password 7.9.834 sends objects). Op names and plain keys print as they
+  // are; every other value goes through redact(); nesting deeper than 4 levels prints as "…".
+  const PLAIN_KEY = /^[A-Za-z_]{1,32}$/;
+  function describeValue(v, depth) {
+    if (typeof v === 'string' && OPS.includes(v)) return v;
+    if (!v || typeof v !== 'object') return redact(v);
+    if (depth >= 4) return '…';
+    if (Array.isArray(v)) return '[' + v.map((x) => describeValue(x, depth + 1)).join(' ') + ']';
+    return '{' + Object.keys(v).map((k) => (PLAIN_KEY.test(k) ? k : '<key>') + '=' + describeValue(v[k], depth + 1)).join(' ') + '}';
+  }
   function describeOp(op) {
-    if (!Array.isArray(op)) return 'op(' + typeof op + ')';
-    return op.map((x, i) => (i === 0 && OPS.includes(x) ? x : redact(x))).join(' ');
+    if (Array.isArray(op)) return op.map((x) => describeValue(x, 1)).join(' ');
+    return describeValue(op, 0);
   }
   // One line per script entry; the payload is never changed.
   function summarizeFill(payload) {

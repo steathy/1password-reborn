@@ -112,3 +112,21 @@ test('probe documents: a dummy passkey save and an ordinary password save', () =
   assert.deepEqual(w.login.secureContents.fields.map((f) => [f.name, f.designation]), [['username', 'username'], ['password', 'password']]);
   assert.equal(L.probeSaveDocs('S9', 'lab-x', 'https://webauthn.io/'), null);
 });
+
+test('summarizeFill describes object-shaped ops (1Password 7.9.834 sends these), still redacted', () => {
+  const payload = { documentUUID: '552aea4c-x', script: [
+    { operation: 'click_on_opid', parameters: ['__op4pk'] },
+    { action: 'fill_by_opid', values: ['__op4pk', PK] },
+    { operation: 'fill_by_opid', parameters: ['__0', 'sky9'], extra: { nested: ['hunter2', 3, true] } },
+  ] };
+  const before = JSON.parse(JSON.stringify(payload));
+  const [line] = L.summarizeFill(payload);
+  assert.deepEqual(payload, before);
+  assert.equal(line, 'doc 552aea4c: {operation=click_on_opid parameters=[__op4pk]} | ' +
+    '{action=fill_by_opid values=[__op4pk PASSKEY(3f1c0a52)]} | ' +
+    '{operation=fill_by_opid parameters=[__0 <4 chars>] extra={nested=[<7 chars> number boolean]}}');
+  for (const secret of ['hunter2', 'sky9', 'SECRETKEY']) assert.ok(!line.includes(secret), secret);
+  const deep = { script: [{ a: { b: { c: { d: { e: 'hunter2' } } } } }] };
+  assert.ok(!L.summarizeFill(deep)[0].includes('hunter2'));
+  assert.equal(L.summarizeFill({ script: [{ 'we!rd key': 'x' }] })[0], 'doc ?: {<key>=<1 chars>}');
+});
