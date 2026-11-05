@@ -176,3 +176,45 @@ test('takePasskeys returns values in first-occurrence order', async () => {
   const p = { script: [['fill_by_opid', '__1', a], ['fill_by_opid', '__2', b], ['fill_by_opid', '__3', a]] };
   assert.deepEqual(FS.takePasskeys(p).values, [a, b]);
 });
+
+/* ---------- dev/passkey-webform: field specs and a second marker ---------- */
+
+test('MARKER_OPIDS lists the passkey and the password marker', () => {
+  assert.deepEqual(FS.MARKER_OPIDS, ['__op4pk', '__op4pw']);
+  assert.equal(FS.PASSWORD_MARKER_OPID, '__op4pw');
+});
+
+test('syntheticField takes an optional spec for opid, name and type', () => {
+  assert.deepEqual(FS.syntheticField(1, { opid: '__op4pw', name: 'password', type: 'password' }), {
+    opid: '__op4pw', elementNumber: 1, visible: true, viewable: true, htmlID: 'password', htmlName: 'password',
+    type: 'password', value: '', 'label-tag': 'password', placeholder: 'password',
+  });
+  assert.equal(FS.syntheticField(0, { type: 'text' }).type, 'text');
+  assert.equal(FS.syntheticField(0, { type: 'text' }).opid, '__op4pk');
+});
+
+test('addPasskeyField adds every spec in order, once per document', () => {
+  const doc = { url: ORIGIN + '/', fields: [{ opid: '__0' }] };
+  const specs = [{ opid: '__op4pw', name: 'password', type: 'password' }, { opid: '__op4pk', name: 'passkey', type: 'text' }];
+  assert.equal(FS.addPasskeyField(doc, () => true, specs), 1);
+  assert.deepEqual(doc.fields.slice(1).map((f) => [f.opid, f.elementNumber, f.htmlName, f.type]),
+    [['__op4pw', 1, 'password', 'password'], ['__op4pk', 2, 'passkey', 'text']]);
+  assert.equal(FS.addPasskeyField(doc, () => true, specs), 0);
+  const marked = { url: ORIGIN + '/', fields: [{ opid: '__op4pw' }] };
+  assert.equal(FS.addPasskeyField(marked, () => true), 0);
+  const def = { url: ORIGIN + '/', fields: [] };
+  assert.equal(FS.addPasskeyField(def, () => true, []), 1);
+  assert.deepEqual(def.fields, [FS.syntheticField(0)]);
+});
+
+test('takePasskeys strips ops on the password marker', async () => {
+  const json = await passkeyJson();
+  const p = { script: [['fill_by_opid', '__op4pw', 'lab-pw'], ['fill_by_opid', '__0', 'bob'], ['fill_by_opid', '__op4pk', json]] };
+  const r = FS.takePasskeys(p);
+  assert.deepEqual(r.values, [json]);
+  assert.equal(r.hadOps, true);
+  assert.deepEqual(p.script, [['fill_by_opid', '__0', 'bob']]);
+  const only = { script: [['click_on_opid', '__op4pw', null], ['fill_by_opid', '__op4pw', 'lab-pw']] };
+  assert.deepEqual(FS.takePasskeys(only), { values: [], hadOps: false });
+  assert.deepEqual(only.script, []);
+});

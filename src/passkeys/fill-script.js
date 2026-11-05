@@ -11,17 +11,25 @@
   'use strict';
 
   const MARKER_OPID = '__op4pk';
+  // A second hidden field (dev/passkey-webform lab variants F2-F4) that absorbs a login's own password.
+  const PASSWORD_MARKER_OPID = '__op4pw';
+  const MARKER_OPIDS = [MARKER_OPID, PASSWORD_MARKER_OPID];
 
-  function syntheticField(elementNumber) {
+  // spec (optional): { opid, name, type }; the default is the passkey field Reborn always used.
+  function syntheticField(elementNumber, spec) {
+    const s = spec || {};
+    const name = s.name || 'passkey';
     return {
-      opid: MARKER_OPID, elementNumber, visible: true, viewable: true, htmlID: 'passkey', htmlName: 'passkey',
-      type: 'password', value: '', 'label-tag': 'passkey', placeholder: 'passkey',
+      opid: s.opid || MARKER_OPID, elementNumber, visible: true, viewable: true, htmlID: name, htmlName: name,
+      type: s.type || 'password', value: '', 'label-tag': name, placeholder: name,
     };
   }
 
-  // Number of fields added: one per wanted document that is not marked yet.
-  function addPasskeyField(collectResult, wants) {
+  // Number of documents marked: every spec is added, in order, to each wanted document that holds
+  // no marker yet. No specs (or an empty list) means the default passkey field.
+  function addPasskeyField(collectResult, wants, specs) {
     let added = 0;
+    const list = Array.isArray(specs) && specs.length ? specs : [null];
     try {
       if (!collectResult || typeof collectResult !== 'object') return 0;
       const docs = Array.isArray(collectResult.pageDetails) ? collectResult.pageDetails
@@ -29,8 +37,8 @@
       for (const doc of docs) {
         try {
           if (!doc || !Array.isArray(doc.fields) || !wants(doc)) continue;
-          if (doc.fields.some((f) => f && f.opid === MARKER_OPID)) continue;
-          doc.fields.push(syntheticField(doc.fields.length));
+          if (doc.fields.some((f) => f && MARKER_OPIDS.includes(f.opid))) continue;
+          for (const spec of list) doc.fields.push(syntheticField(doc.fields.length, spec));
           added++;
         } catch (e) { /* skip this document */ }
       }
@@ -52,13 +60,13 @@
   }
 
   const MAX_DEPTH = 8;
-  // True when x holds the marker opid or a passkey value anywhere (arrays, plain-object values);
+  // True when x holds a marker opid or a passkey value anywhere (arrays, plain-object values);
   // passkey values are added to `values` (first occurrence order, de-duplicated). Too deep, cyclic
   // or unreadable input counts as a hit (fail closed).
   function scan(x, values, depth) {
     try {
       if (typeof x === 'string') {
-        if (x === MARKER_OPID) return true;
+        if (MARKER_OPIDS.includes(x)) return true;
         if (!isPasskeyValue(x)) return false;
         if (!values.includes(x)) values.push(x);
         return true;
@@ -115,5 +123,5 @@
     } catch (e) { /* total */ }
   }
 
-  return { MARKER_OPID, syntheticField, addPasskeyField, isPasskeyValue, takePasskeys, emptyScripts };
+  return { MARKER_OPID, PASSWORD_MARKER_OPID, MARKER_OPIDS, syntheticField, addPasskeyField, isPasskeyValue, takePasskeys, emptyScripts };
 });

@@ -101,7 +101,10 @@
   function autosave(login, collectedDocument, url) {
     // The engine's own save call, with context 'manual-save': for 'auto-save' the 1Password 4 app
     // (4.6.1) shows its save dialog only when the login has a password-designated field; a passkey login has none.
-    OP.autosave({ login, collectedDocument, context: 'manual-save', location: url }, null, { url });
+    let doc = collectedDocument;
+    try { if (self.op4pkLab) doc = self.op4pkLab.reshapeSave(collectedDocument) || collectedDocument; }   // dev/passkey-webform lab
+    catch (e) { doc = collectedDocument; console.error(TAG, 'lab save hook failed', e); }
+    OP.autosave({ login, collectedDocument: doc, context: 'manual-save', location: url }, null, { url });
   }
   // The cached tab is meaningful only for the focused window. While a focus change's tab
   // query is pending the cache still names the previous window's tab, which reads as
@@ -172,7 +175,10 @@
       const owner = manager.getState().owner;
       const a = getActive();
       if (owner && owner.stage === 'waiting' && a && a.tabId === owner.tabId) {
-        FS.addPasskeyField(c, (doc) => originOf(doc.url) === owner.origin);
+        let specs;                                                       // dev/passkey-webform lab: hidden-field variant
+        try { specs = self.op4pkLab ? self.op4pkLab.hiddenFields() : undefined; } catch (e) { specs = undefined; }
+        const n = FS.addPasskeyField(c, (doc) => originOf(doc.url) === owner.origin, specs);
+        try { if (self.op4pkLab) self.op4pkLab.logCollect(n); } catch (e) { /* lab log only */ }
       }
     } catch (e) { console.error(TAG, 'collect hook failed', e); }
     return origFa.apply(this, arguments);
@@ -181,6 +187,8 @@
   // hand a found value to the manager, and fail closed (empty scripts) if anything throws.
   const origExecuteFillScript = AH.executeFillScript;
   AH.executeFillScript = function (payload) {
+    try { if (self.op4pkLab) self.op4pkLab.logFill(payload); }    // dev/passkey-webform lab: redacted, before the strip
+    catch (e) { console.error(TAG, 'lab fill log failed', e); }
     try {
       const found = FS.takePasskeys(payload);
       let consumed = false;

@@ -35,7 +35,8 @@ try {
 }
 
 try {
-  importScripts('ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js', 'passkeys/fill-script.js', 'passkeys/sw-passkeys.js');
+  // passkeys/lab.js: dev/passkey-webform only (docs/passkey-webform-design.md), not for release.
+  importScripts('ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js', 'passkeys/fill-script.js', 'passkeys/sw-passkeys.js', 'passkeys/lab.js');
   console.info('[1P-MV3] passkeys loaded');
 } catch (e) {
   console.error('[1P-MV3] passkeys failed to load', e);
