@@ -177,7 +177,9 @@
       if (owner && owner.stage === 'waiting' && a && a.tabId === owner.tabId) {
         let specs;                                                       // dev/passkey-webform lab: hidden-field variant
         try { specs = self.op4pkLab ? self.op4pkLab.hiddenFields() : undefined; } catch (e) { specs = undefined; }
-        const n = FS.addPasskeyField(c, (doc) => originOf(doc.url) === owner.origin, specs);
+        let opts;
+        try { opts = self.op4pkLab ? self.op4pkLab.hiddenOptions() : undefined; } catch (e) { opts = undefined; }
+        const n = FS.addPasskeyField(c, (doc) => originOf(doc.url) === owner.origin, specs, opts);
         try { if (self.op4pkLab) self.op4pkLab.logCollect(n); } catch (e) { /* lab log only */ }
       }
     } catch (e) { console.error(TAG, 'collect hook failed', e); }

@@ -35,7 +35,7 @@ test('every save shape has the expected fields, in order, without touching the i
     S5: [['username', 'text', 'sky9'], ['password', 'password', 'PK'], ['passkey', 'password', 'PK']],
     S6: [['username', 'text', 'sky9'], ['passkey', 'password', 'PK'], ['password', 'password', 'PK']],
   };
-  assert.deepEqual(Object.keys(L.SAVE_SHAPES), ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+  assert.deepEqual(Object.keys(L.SAVE_SHAPES), ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7']);
   for (const [shape, fields] of Object.entries(want)) {
     const d = currentDoc();
     const out = L.reshapeSave(d, shape);
@@ -51,7 +51,7 @@ test('every save shape has the expected fields, in order, without touching the i
 });
 
 test('hidden-field variants: F0 is the default field, the others as specified', () => {
-  assert.deepEqual(Object.keys(L.HIDDEN_VARIANTS), ['F0', 'F1', 'F2', 'F3', 'F4']);
+  assert.deepEqual(Object.keys(L.HIDDEN_VARIANTS), ['F0', 'F1', 'F2', 'F3', 'F4', 'F5']);
   const doc = (v) => { const d = { fields: [] }; FS.addPasskeyField(d, () => true, L.HIDDEN_VARIANTS[v]); return d.fields.map((f) => [f.opid, f.htmlName, f.type]); };
   assert.deepEqual(L.HIDDEN_VARIANTS.F0.map((s, i) => FS.syntheticField(i, s)), [FS.syntheticField(0)]);
   assert.deepEqual(doc('F1'), [['__op4pk', 'passkey', 'text']]);
@@ -129,4 +129,11 @@ test('summarizeFill describes object-shaped ops (1Password 7.9.834 sends these),
   const deep = { script: [{ a: { b: { c: { d: { e: 'hunter2' } } } } }] };
   assert.ok(!L.summarizeFill(deep)[0].includes('hunter2'));
   assert.equal(L.summarizeFill({ script: [{ 'we!rd key': 'x' }] })[0], 'doc ?: {<key>=<1 chars>}');
+});
+
+test('S7 is the combined save; F5 is the capture set', () => {
+  assert.deepEqual(L.pageFieldsFor('S7', 'lab-s7', PK, 'lab-s7-pw').map((f) => [f.htmlName, f.type, f.value === PK ? 'PK' : f.value]),
+    [['username', 'text', 'lab-s7'], ['password', 'password', 'lab-s7-pw'], ['passkey', 'text', 'PK']]);
+  assert.equal(L.probeSaveDocs('S7', 'lab-s7', 'https://webauthn.io/').collectedDocument.fields[1].value, 'lab-s7-pw');
+  assert.equal(L.HIDDEN_VARIANTS.F5, FS.CAPTURE_FIELDS);
 });

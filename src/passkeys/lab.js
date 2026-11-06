@@ -32,18 +32,19 @@
     S4: 'passkey (password, invisible)',
     S5: 'password (password, = passkey), passkey (password)',
     S6: 'passkey (password), password (password, = passkey)',
+    S7: 'password (password, the login password), passkey (text): the combined save',
   };
   const PK_PW = { opid: '__op4pk', name: 'passkey', type: 'password' };
   const PK_TEXT = { opid: '__op4pk', name: 'passkey', type: 'text' };
   const PW = { opid: '__op4pw', name: 'password', type: 'password' };
-  const HIDDEN_VARIANTS = { F0: [PK_PW], F1: [PK_TEXT], F2: [PW, PK_PW], F3: [PW, PK_TEXT], F4: [PK_PW, PW] };
+  const HIDDEN_VARIANTS = { F0: [PK_PW], F1: [PK_TEXT], F2: [PW, PK_PW], F3: [PW, PK_TEXT], F4: [PK_PW, PW], F5: FS.CAPTURE_FIELDS };
 
   function pageField(i, name, type, value, extra) {
     return Object.assign({ opid: '__' + i, elementNumber: i, visible: true, viewable: true, userEdited: true,
       htmlID: name, htmlName: name, type, value, 'label-tag': name }, extra || {});
   }
   // Page fields for a shape; S0 is exactly request-manager.js buildSavePayload's.
-  function pageFieldsFor(shape, userName, pk) {
+  function pageFieldsFor(shape, userName, pk, pw) {
     const rest = {
       S0: [['passkey', 'password', pk]],
       S1: [['password', 'password', ''], ['passkey', 'password', pk]],
@@ -52,6 +53,7 @@
       S4: [['passkey', 'password', pk, { visible: false, viewable: false }]],
       S5: [['password', 'password', pk], ['passkey', 'password', pk]],
       S6: [['passkey', 'password', pk], ['password', 'password', pk]],
+      S7: [['password', 'password', pw], ['passkey', 'text', pk]],
     }[shape];
     if (!rest) return null;
     return [pageField(0, 'username', 'text', userName)].concat(rest.map((r, i) => pageField(i + 1, r[0], r[1], r[2], r[3])));
@@ -103,7 +105,7 @@
 
   const dummyPasskey = (user) => JSON.stringify({ v: 1, credentialId: user, lab: true });
   function probeSaveDocs(shape, user, url) {
-    const fields = pageFieldsFor(shape, user, dummyPasskey(user));
+    const fields = pageFieldsFor(shape, user, dummyPasskey(user), user + '-pw');
     if (!fields) return null;
     const title = 'Lab ' + shape + ' ' + user;
     return {
@@ -174,6 +176,7 @@
       },
       // Hooks called by sw-passkeys.js (each call there is guarded).
       hiddenFields: () => HIDDEN_VARIANTS[state.hidden],
+      hiddenOptions: () => ({ replace: state.hidden === 'F5' }),
       reshapeSave(doc) {
         const out = reshapeSave(doc, state.save);
         if (out && Array.isArray(out.fields)) log('passkey save, shape ' + state.save + ': ' + describeFields(out.fields));
