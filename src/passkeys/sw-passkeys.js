@@ -62,10 +62,23 @@
       for (const rpId of Object.keys(early)) for (const e of early[rpId]) index.add(rpId, e);
       resolve();
     }));
-  // Requests are handled only once the persisted index and the focused tab are known, so the
-  // first request after a worker start honours persisted exclusions and positive matches
+  /* ---------- settings: chrome.storage.local['op4pk.settings'] = { addToExisting } (default on) ---------- */
+  let settings = { addToExisting: true };
+  const settingsReady = new Promise((resolve) =>
+    chrome.storage.local.get('op4pk.settings', (r) => {
+      void chrome.runtime.lastError;                  // an unreadable value counts as on
+      const s = r && r['op4pk.settings'];
+      if (s && typeof s.addToExisting === 'boolean') settings = { addToExisting: s.addToExisting };
+      resolve();
+    }));
+  function setAddToExisting(on) {
+    settings = { addToExisting: on === true };
+    chrome.storage.local.set({ 'op4pk.settings': settings }, () => void chrome.runtime.lastError);
+  }
+  // Requests are handled only once the persisted index, the switch and the focused tab are known, so
+  // the first request after a worker start honours persisted exclusions and positive matches
   // (spec: Create step 3; Chrome storage docs: "asynchronous preload from storage").
-  const ready = Promise.all([indexReady, activeReady]);
+  const ready = Promise.all([indexReady, activeReady, settingsReady]);
 
   /* ---------- recovery store: chrome.storage.session['op4pk.recovery'] (cleared when the browser closes, or when the extension is updated, reloaded or disabled) ---------- */
   // Every operation is a read-modify-write of one object, so they run one at a time through a
@@ -101,10 +114,7 @@
   function autosave(login, collectedDocument, url) {
     // The engine's own save call, with context 'manual-save': for 'auto-save' the 1Password 4 app
     // (4.6.1) shows its save dialog only when the login has a password-designated field; a passkey login has none.
-    let doc = collectedDocument;
-    try { if (self.op4pkLab) doc = self.op4pkLab.reshapeSave(collectedDocument) || collectedDocument; }   // dev/passkey-webform lab
-    catch (e) { doc = collectedDocument; console.error(TAG, 'lab save hook failed', e); }
-    OP.autosave({ login, collectedDocument: doc, context: 'manual-save', location: url }, null, { url });
+    OP.autosave({ login, collectedDocument, context: 'manual-save', location: url }, null, { url });
   }
   // The cached tab is meaningful only for the focused window. While a focus change's tab
   // query is pending the cache still names the previous window's tab, which reads as
@@ -124,6 +134,7 @@
     // WebSocket). The engine exports the class and keeps its current connection in Agent.c.
     isNativeApp: () => typeof self.NativeMessagingConnection === 'function' && Agent.c instanceof self.NativeMessagingConnection,
     getActive,
+    getSettings: () => settings,
     log: (level, ...args) => (level === 'error' ? console.error : console.warn)(TAG, ...args),
   });
 
@@ -167,39 +178,59 @@
 
   /* ---------- 1Password 4.6.1 fill path: collectDocuments → executeFillScript ---------- */
   const originOf = (u) => { try { return new URL(u).origin; } catch (e) { return null; } };
-  // Collect hook: while a get request waits, add a synthetic field to the owner's page so the
-  // app's fill script carries the passkey (the raw item never reaches the extension).
+  // Collect hook: while a sign-in waits, add the sign-in fields to the owner's page so the app's fill
+  // script carries the passkey. While "add to an existing login" picks (or its mismatch card is
+  // open), report only the capture fields, so a fill carries the picked login's username and
+  // password (the raw item never reaches the extension), and record which documents this pick
+  // reported: only their fills are taken (review round 1, R2).
+  const isPickStage = (stage) => stage === 'pick-login' || stage === 'pick-confirm';
+  let captureDocs = { pick: null, ids: new Set() };
   const origFa = Agent.Fa;
   Agent.Fa = function (c) {
     try {
       const owner = manager.getState().owner;
       const a = getActive();
-      if (owner && owner.stage === 'waiting' && a && a.tabId === owner.tabId) {
-        let specs;                                                       // dev/passkey-webform lab: hidden-field variant
-        try { specs = self.op4pkLab ? self.op4pkLab.hiddenFields() : undefined; } catch (e) { specs = undefined; }
-        let opts;
-        try { opts = self.op4pkLab ? self.op4pkLab.hiddenOptions() : undefined; } catch (e) { opts = undefined; }
-        const n = FS.addPasskeyField(c, (doc) => originOf(doc.url) === owner.origin, specs, opts);
-        try { if (self.op4pkLab) self.op4pkLab.logCollect(n); } catch (e) { /* lab log only */ }
+      if (owner && a && a.tabId === owner.tabId && (owner.stage === 'waiting' || isPickStage(owner.stage))) {
+        const capture = isPickStage(owner.stage);
+        if (capture && captureDocs.pick !== owner.pick) captureDocs = { pick: owner.pick, ids: new Set() };
+        FS.addPasskeyField(c, (doc) => originOf(doc.url) === owner.origin, capture ? FS.CAPTURE_FIELDS : FS.SIGNIN_FIELDS, {
+          replace: capture,
+          onMark: capture ? (doc) => { if (typeof doc.documentUUID === 'string') captureDocs.ids.add(doc.documentUUID); } : undefined,
+        });
       }
     } catch (e) { console.error(TAG, 'collect hook failed', e); }
     return origFa.apply(this, arguments);
   };
-  // Fill hook: strip passkey ops from EVERY fill script so a passkey is never typed into a page;
-  // hand a found value to the manager, and fail closed (empty scripts) if anything throws.
+  // Fill hook: strip hidden-field and passkey ops from EVERY fill script so neither a passkey nor a
+  // copied password is ever typed into a page. While a pick (or its mismatch card) is open, every
+  // fill is emptied whatever it holds; in pick-login the entries of this pick's documents go to
+  // handleCapture one at a time (values of different documents are never combined; a fill for any
+  // other document, an earlier pick or a cancelled request is never taken). Otherwise a found
+  // passkey goes to the sign-in path. Fail closed (empty scripts) if anything throws.
   const origExecuteFillScript = AH.executeFillScript;
   AH.executeFillScript = function (payload) {
-    try { if (self.op4pkLab) self.op4pkLab.logFill(payload); }    // dev/passkey-webform lab: redacted, before the strip
-    catch (e) { console.error(TAG, 'lab fill log failed', e); }
     try {
       const found = FS.takePasskeys(payload);
-      let consumed = false;
-      if (found.values.length) {
-        consumed = manager.handleFillItem({ item: { secureContents: { fields: [{ name: 'passkey', type: 'P', value: found.values[0] }] } } });
-      } else if (found.hadOps) {
-        manager.handleFillItem({ item: { secureContents: { fields: [] } } });   // shows the no-passkey notice while waiting
+      const owner = manager.getState().owner;
+      if (owner && isPickStage(owner.stage)) {
+        if (owner.stage === 'pick-login' && captureDocs.pick === owner.pick) {
+          for (const e of found.entries) {
+            if (!e.documentUUID || !captureDocs.ids.has(e.documentUUID)) continue;   // not one of this pick's documents
+            if (!manager.handleCapture({ username: e.markers[FS.USERNAME_MARKER_OPID], password: e.markers[FS.PASSWORD_MARKER_OPID], passkeys: e.values })) break;
+            const after = manager.getState().owner;
+            if (!after || after.stage !== 'pick-login') break;      // taken, or a mismatch to confirm: later entries are not read
+          }
+        }
+        FS.emptyScripts(payload);                  // nothing is typed while picking; the original still reports fillItemResults
+      } else {
+        let consumed = false;
+        if (found.values.length) {
+          consumed = manager.handleFillItem({ item: { secureContents: { fields: [{ name: 'passkey', type: 'P', value: found.values[0] }] } } });
+        } else if (found.hadOps || Object.keys(found.markers).length) {
+          manager.handleFillItem({ item: { secureContents: { fields: [] } } });   // the no-passkey notice while a sign-in waits
+        }
+        if (consumed) FS.emptyScripts(payload);    // nothing is typed; the original still reports fillItemResults
       }
-      if (consumed) FS.emptyScripts(payload);      // nothing is typed; the original still reports fillItemResults
     } catch (e) {
       FS.emptyScripts(payload);
       console.error(TAG, 'fill script hook failed', e);
@@ -228,16 +259,21 @@
   });
   chrome.tabs.onRemoved.addListener((tabId) => manager.onTabRemoved(tabId));
 
-  /* ---------- context menu: "1Password passkeys" → Re-save <title> / Discard all ---------- */
+  /* ---------- context menu: "1Password passkeys" → Add new passkeys to an existing login / Re-save <title> / Discard all ---------- */
   const ROOT_ID = 'op4pk-root';
+  const ADD_ID = 'op4pk-add-existing';
   const CONTEXTS = ['action'];
   let rebuilding = Promise.resolve();
   function rebuildMenus() {
     rebuilding = rebuilding.then(async () => {
+      await settingsReady;
       const all = await sessionGet();
       await new Promise((resolve) => chrome.contextMenus.remove(ROOT_ID, () => { void chrome.runtime.lastError; resolve(); }));
       const done = () => void chrome.runtime.lastError;
       chrome.contextMenus.create({ id: ROOT_ID, title: '1Password passkeys', contexts: CONTEXTS }, done);
+      chrome.contextMenus.create({ id: ADD_ID, parentId: ROOT_ID, type: 'checkbox', checked: settings.addToExisting,
+        title: 'Add new passkeys to an existing login', contexts: CONTEXTS }, done);
+      chrome.contextMenus.create({ id: 'op4pk-sep', parentId: ROOT_ID, type: 'separator', contexts: CONTEXTS }, done);
       const ids = Object.keys(all);
       if (!ids.length) {
         chrome.contextMenus.create({ id: 'op4pk-empty', parentId: ROOT_ID, title: 'No unsaved passkeys', enabled: false, contexts: CONTEXTS }, done);
@@ -252,6 +288,7 @@
   }
   chrome.contextMenus.onClicked.addListener((info) => {
     const id = String(info.menuItemId);
+    if (id === ADD_ID) { setAddToExisting(info.checked === true); return; }
     if (id === 'op4pk-discard') { recovery.clear().catch(() => {}); return; }   // failures are logged by mutateRecovery
     if (!id.startsWith('op4pk-resave:')) return;
     sessionGet().then((all) => {

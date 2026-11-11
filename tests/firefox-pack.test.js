@@ -43,7 +43,7 @@ after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 it('1. background.scripts equals the importScripts order of src/sw-bootstrap.js', () => {
   const order = P.importScriptsOrder(fs.readFileSync(path.join(SRC, 'sw-bootstrap.js'), 'utf8'));
   assert.deepEqual(order, P.BACKGROUND_SCRIPTS);
-  assert.equal(order.length, 10);                                  // dev/passkey-webform: + passkeys/lab.js
+  assert.equal(order.length, 9);
 });
 
 for (const v of P.VARIANTS) {

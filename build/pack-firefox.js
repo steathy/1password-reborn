@@ -53,7 +53,6 @@ const BACKGROUND_SCRIPTS = [
   'ext/sjcl.js', 'global.min.js',
   'bg/after-engine.js',
   'ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js', 'passkeys/fill-script.js', 'passkeys/sw-passkeys.js',
-  'passkeys/lab.js',                                                  // dev/passkey-webform only
 ];
 const REMOVED_KEYS = ['key', 'minimum_chrome_version', 'version_name'];
 // Firefox-only manifest additions (found in the Gate 2 test). Firefox's
