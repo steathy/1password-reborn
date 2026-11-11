@@ -181,15 +181,17 @@
           secureContents: {
             fields: [
               { name: 'username', value: p.userName, type: 'T', designation: 'username' },
-              { name: 'passkey', value: passkeyJson, type: 'P' },
+              { name: 'passkey', value: passkeyJson, type: 'T' },
             ],
           },
         },
-        // userEdited: 1Password 7.9 keeps a password-type page field as the login's password only when
-        // the page marks it as typed by the user; without it the passkey is dropped. 1Password 7 never reads login.
+        // 1Password 7 never reads `login`; it rebuilds the item from these page fields. userEdited:
+        // 1Password 7.9 keeps a field only when the page marks it as typed by the user. The passkey is a
+        // TEXT field: 1Password 7 stores it in the "Saved on <site>" section, which a later password
+        // Update leaves alone, and fills it by its label next to the login's own password.
         collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, title: app7Title(rec), forms: {}, fields: [
           { opid: '__0', elementNumber: 0, visible: true, viewable: true, userEdited: true, htmlID: 'username', htmlName: 'username', type: 'text', value: p.userName, 'label-tag': 'username' },
-          { opid: '__1', elementNumber: 1, visible: true, viewable: true, userEdited: true, htmlID: 'passkey', htmlName: 'passkey', type: 'password', value: passkeyJson, 'label-tag': 'passkey' },
+          { opid: '__1', elementNumber: 1, visible: true, viewable: true, userEdited: true, htmlID: 'passkey', htmlName: 'passkey', type: 'text', value: passkeyJson, 'label-tag': 'passkey' },
         ], collectedTimestamp: now() },
       };
     }
