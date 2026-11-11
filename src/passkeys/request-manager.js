@@ -27,9 +27,11 @@
     const setT = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
     const clearT = deps.clearTimeout || ((h) => clearTimeout(h));
     const now = deps.now || (() => Date.now());
+    const getSettings = deps.getSettings || (() => ({ addToExisting: true }));
 
     const pending = new Map();   // "portId:requestId" → record
-    let owner = null;            // the single get record allowed to use the app popup
+    let owner = null;            // the single record (a sign-in, or a create picking a login) allowed to use the app popup
+    let pickSeq = 0;             // numbers every start of a pick (getState().owner.pick)
 
     const keyOf = (port, id) => port.id + ':' + id;
     const normId = (b64) => A.b64url.encode(A.b64url.decode(b64));
@@ -91,7 +93,7 @@
       const rec = {
         key: keyOf(port, msg.id), id: msg.id, port, kind: msg.kind, options,
         origin: sender.origin, tabId: tab.id, windowId: tab.windowId, url: tab.url || '',
-        stage: 'prompt', timer: null, excluded: false, allow: [], created: null, passkey: null, title: '',
+        stage: 'prompt', timer: null, excluded: false, allow: [], created: null, passkey: null, title: '', login: null,
       };
       let host;
       try { host = new URL(rec.origin).hostname; } catch (e) {
@@ -113,8 +115,15 @@
     /* ---------- approvals: resolved by (port, id), then by the record's own stage ---------- */
     function approve(rec, msg) {
       if (msg.stage !== rec.stage) return;
-      if (rec.kind === 'create' && rec.stage === 'prompt' && !rec.excluded) return createSave(rec, msg.title);
-      if (rec.kind === 'create' && rec.stage === 'saving') return createDone(rec);
+      if (rec.kind === 'create') {
+        if (rec.stage === 'prompt' && !rec.excluded) return createStart(rec, msg.title);
+        if (rec.stage === 'pick-login' && msg.choice === 'again') return pickAgain(rec);
+        if ((rec.stage === 'pick-login' || rec.stage === 'pick-confirm') && msg.choice === 'new') return pickDone(rec, null);
+        if (rec.stage === 'pick-confirm' && msg.choice === 'again') return pickAgain(rec);
+        if (rec.stage === 'pick-confirm' && msg.choice === 'use') return pickDone(rec, rec.login);
+        if (rec.stage === 'saving') return createDone(rec);
+        return;
+      }
       if (rec.kind === 'get' && rec.stage === 'prompt') return getOpenPopup(rec);
       if (rec.kind === 'get' && rec.stage === 'confirm' && owner === rec) return getSign(rec);
     }
@@ -146,15 +155,70 @@
       }
       card(rec, 'create-prompt', { site: siteName(rec), name: userLabel(rec), defaultTitle: defaultTitle(rec) });
     }
-    async function createSave(rec, title) {
+    function createStart(rec, title) {
+      rec.title = (typeof title === 'string' && title.trim()) ? title.trim() : defaultTitle(rec);
+      if (!addToExisting()) return createSave(rec, null);
+      openPick(rec);
+    }
+    function addToExisting() {
+      try { const s = getSettings(); return !(s && s.addToExisting === false); } catch (e) { return true; }
+    }
+    // "Add to an existing login" (docs/1pass7-design.md 8): the request takes the popup slot like a
+    // sign-in; the adapter reports Reborn's capture fields for the owner's page, and the app's fill
+    // of the picked login comes back through handleCapture. The passkey is generated only after the
+    // pick, so an abandoned pick leaves no key behind.
+    function openPick(rec) {
+      if (owner && owner !== rec) { rec.stage = 'busy'; return card(rec, 'busy'); }
+      if (!isConnected()) { rec.stage = 'prompt'; return card(rec, 'not-connected'); }
+      owner = rec;
+      showPick(rec);
+    }
+    function showPick(rec) {
+      rec.pick = ++pickSeq;                              // ties the adapter's capture to this attempt (review round 1, R2)
+      rec.stage = 'pick-login';
+      rec.login = null;
+      card(rec, 'pick-login', { site: siteName(rec), name: userLabel(rec) });
+      showPopup(rec.url);
+    }
+    function pickAgain(rec) { if (owner === rec) showPick(rec); }
+    function pickDone(rec, login) {
+      if (owner === rec) owner = null;
+      rec.login = null;
+      createSave(rec, login);
+      promote();
+    }
+    function accountName(rec) { const u = rec.options.user || {}; return String(u.name || u.displayName || '').trim(); }
+    // The app's fill of the picked login (spec 9). True while a pick waits: the adapter empties
+    // every fill then, so nothing is typed into the page. Card messages never carry the password.
+    function handleCapture(found) {
+      const rec = owner;
+      if (!rec || rec.kind !== 'create' || rec.stage !== 'pick-login') return false;
+      if (!ownerIsActive()) return true;                                    // a fill for another tab: nothing taken
+      const f = found && typeof found === 'object' ? found : {};
+      const password = typeof f.password === 'string' ? f.password : '';
+      const username = typeof f.username === 'string' ? f.username.trim() : '';
+      const passkeys = Array.isArray(f.passkeys) ? f.passkeys : [];
+      if (!password && !username && !passkeys.length) return true;         // nothing for us (another frame): keep waiting
+      if (passkeys.length) { card(rec, 'pick-notice', { text: 'That item is a passkey, not a login with a password.' }); return true; }
+      if (!password) { card(rec, 'pick-notice', { text: 'That login has no password.' }); return true; }
+      const account = accountName(rec);
+      rec.login = { username: username || account, password };
+      if (username && account && username.toLowerCase() !== account.toLowerCase()) {
+        rec.stage = 'pick-confirm';
+        card(rec, 'pick-mismatch', { login: username, account });
+        return true;
+      }
+      pickDone(rec, rec.login);
+      return true;
+    }
+    async function createSave(rec, login) {
       if (!isConnected()) return card(rec, 'not-connected');   // the app went away while the prompt was open
       rec.stage = 'saving';
       let made;
       try { made = await A.makeCredential(rec.options, rec.origin, { uv: true }); }
       catch (e) { return failReq(rec, e.name || 'NotAllowedError', e.message); }
       if (!pending.has(rec.key)) return;                 // retired while generating
-      rec.title = (typeof title === 'string' && title.trim()) ? title.trim() : defaultTitle(rec);
-      const payload = buildSavePayload(rec, made);
+      const payload = buildSavePayload(rec, made, login);
       // Spec create step 4: the recovery copy is stored BEFORE anything is sent. The adapter's
       // put is asynchronous and rejects on a storage error; neither the app save nor Done may
       // proceed until it has succeeded.
@@ -168,31 +232,36 @@
       if (!isConnected()) return card(rec, 'not-connected');   // the app went away meanwhile: the copy stays, Done stays inert
       rec.created = made;                                // only now can Done succeed
       autosave(payload.login, payload.collectedDocument, payload.url);
-      card(rec, 'create-saving', isNativeApp() ? { app7: true, title: rec.title } : undefined);   // 1Password 7 preselects Update existing and names the item after the site
+      // 1Password 7 preselects Update existing and names the item after the site; a combined save also gets the old-login note.
+      card(rec, 'create-saving', Object.assign(isNativeApp() ? { app7: true, title: rec.title } : {}, login ? { combined: true } : {}));
     }
-    function buildSavePayload(rec, made) {
+    function buildSavePayload(rec, made, login) {
       const p = made.passkey;
       const passkeyJson = A.encodePasskeyField(p);
+      const userName = login && login.username ? login.username : p.userName;
+      const pageField = (i, name, type, value) => ({ opid: '__' + i, elementNumber: i, visible: true, viewable: true, userEdited: true,
+        htmlID: name, htmlName: name, type, value, 'label-tag': name });
+      const fields = [{ name: 'username', value: userName, type: 'T', designation: 'username' }];
+      const pageFields = [pageField(0, 'username', 'text', userName)];
+      if (login) {                                       // the copied login: the field named password becomes the item's password
+        fields.push({ name: 'password', value: login.password, type: 'P', designation: 'password' });
+        pageFields.push(pageField(1, 'password', 'password', login.password));
+      }
+      fields.push({ name: 'passkey', value: passkeyJson, type: 'T' });
+      pageFields.push(pageField(pageFields.length, 'passkey', 'text', passkeyJson));
       return {
         credentialId: p.credentialId, title: rec.title, url: rec.url, createdAt: now(),
         login: {
           type_name: 'webforms.WebForm',
           overview: { title: rec.title, location: rec.url, tags: ['passkey'] },
-          secureContents: {
-            fields: [
-              { name: 'username', value: p.userName, type: 'T', designation: 'username' },
-              { name: 'passkey', value: passkeyJson, type: 'T' },
-            ],
-          },
+          secureContents: { fields },
         },
         // 1Password 7 never reads `login`; it rebuilds the item from these page fields. userEdited:
         // 1Password 7.9 keeps a field only when the page marks it as typed by the user. The passkey is a
         // TEXT field: 1Password 7 stores it in the "Saved on <site>" section, which a later password
         // Update leaves alone, and fills it by its label next to the login's own password.
-        collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, title: app7Title(rec), forms: {}, fields: [
-          { opid: '__0', elementNumber: 0, visible: true, viewable: true, userEdited: true, htmlID: 'username', htmlName: 'username', type: 'text', value: p.userName, 'label-tag': 'username' },
-          { opid: '__1', elementNumber: 1, visible: true, viewable: true, userEdited: true, htmlID: 'passkey', htmlName: 'passkey', type: 'text', value: passkeyJson, 'label-tag': 'passkey' },
-        ], collectedTimestamp: now() },
+        collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, title: app7Title(rec), forms: {},
+          fields: pageFields, collectedTimestamp: now() },
       };
     }
     function createDone(rec) {
@@ -244,7 +313,7 @@
       const a = getActive();
       if (!a) return;
       for (const rec of pending.values()) {
-        if (rec.kind === 'get' && rec.stage === 'busy' && rec.tabId === a.tabId && rec.windowId === a.windowId) return getOpenPopup(rec);
+        if (rec.stage === 'busy' && rec.tabId === a.tabId && rec.windowId === a.windowId) return rec.kind === 'create' ? openPick(rec) : getOpenPopup(rec);
       }
     }
     // Owner-only triggers: busy requests are never retired by these.
@@ -318,12 +387,13 @@
 
     function getState() {
       return {
-        owner: owner ? { id: owner.id, stage: owner.stage, tabId: owner.tabId, origin: owner.origin } : null,
+        owner: owner ? Object.assign({ id: owner.id, stage: owner.stage, tabId: owner.tabId, origin: owner.origin },
+          owner.pick ? { pick: owner.pick } : {}) : null,
         pending: Array.from(pending.values()).map((r) => ({ id: r.id, kind: r.kind, stage: r.stage, tabId: r.tabId })),
       };
     }
 
-    return { onConnect, handleFillItem, onTabActivated, onTabRemoved, onWindowFocusChanged, getState };
+    return { onConnect, handleFillItem, handleCapture, onTabActivated, onTabRemoved, onWindowFocusChanged, getState };
   }
 
   return { createManager, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, WINDOW_ID_NONE };

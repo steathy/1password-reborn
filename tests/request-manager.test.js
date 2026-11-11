@@ -55,6 +55,7 @@ function harness(opts = {}) {
     autosave: (login, doc, url) => calls.autosave.push({ login, doc, url }),
     isConnected: () => connected,
     isNativeApp: () => opts.nativeApp === true,
+    getSettings: () => ({ addToExisting: opts.addToExisting === true }),
     getActive: () => active,
     setTimeout: (fn, ms) => { const h = { fn, ms, cleared: false }; timers.push(h); return h; },
     clearTimeout: (h) => { if (h) h.cleared = true; },
@@ -530,5 +531,160 @@ test('create: the saving card carries the 1Password 7 note only with a native-me
     await until(() => p.state() === 'create-saving', 'saving card');
     assert.equal(p.last('card').card.app7, nativeApp ? true : undefined, String(nativeApp));
     assert.equal(p.last('card').card.title, nativeApp ? '[Passkey] Example - Alice' : undefined, String(nativeApp));
+  }
+});
+
+/* ---------- 1Password 7 edition: add to an existing login (docs/1pass7-design.md 8, 9) ---------- */
+
+const pickHarness = (opts = {}) => harness({ addToExisting: true, ...opts });
+function pickStart(p, extra) {
+  p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions(extra) });
+  p.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+}
+const fieldRows = (x) => x.map((f) => [f.name, f.type, f.designation, f.name === 'passkey' ? 'PK' : f.value]);
+
+test('pick: Save opens the pick card and the popup; a capture saves one combined item', async () => {
+  const h = pickHarness({ nativeApp: true }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  pickStart(p);
+  assert.deepEqual(p.last('card').card, { state: 'pick-login', site: 'Example', name: 'Alice' });
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
+  assert.deepEqual(h.m.getState().owner, { id: 'c1', stage: 'pick-login', tabId: 1, origin: ORIGIN, pick: 1 });
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com', password: 'hunter2', passkeys: [] }), true);
+  assert.equal(h.m.getState().owner, null);                                 // the slot is free again
+  await until(() => h.calls.autosave.length === 1, 'autosave');
+  const { login, doc } = h.calls.autosave[0];
+  assert.deepEqual(fieldRows(login.secureContents.fields),
+    [['username', 'T', 'username', 'alice@example.com'], ['password', 'P', 'password', 'hunter2'], ['passkey', 'T', undefined, 'PK']]);
+  assert.deepEqual(doc.fields.map((f) => [f.opid, f.elementNumber, f.htmlName, f.type, f.userEdited, f.htmlName === 'passkey' ? 'PK' : f.value]),
+    [['__0', 0, 'username', 'text', true, 'alice@example.com'], ['__1', 1, 'password', 'password', true, 'hunter2'], ['__2', 2, 'passkey', 'text', true, 'PK']]);
+  assert.equal((await A.decodePasskeyField(doc.fields[2].value)).rpId, 'example.com');
+  assert.equal(h.calls.recoveryPut[0][1].collectedDocument, doc);            // the recovery copy is the combined save
+  assert.deepEqual(p.last('card').card, { state: 'create-saving', app7: true, title: '[Passkey] Example - Alice', combined: true });
+  assert.equal(JSON.stringify(p.sent).includes('hunter2'), false, 'no message to the page carries the password');
+  p.emit({ type: 'approve', id: 'c1', stage: 'saving' });
+  assert.ok(p.last('reply').credential);
+  assert.equal(h.indexData['example.com'].length, 1);
+});
+
+test('pick: New login instead, from the pick card or a notice, saves a passkey-only item', async () => {
+  for (const viaNotice of [false, true]) {
+    const h = pickHarness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    pickStart(p);
+    if (viaNotice) {
+      h.m.handleCapture({ username: 'alice@example.com', password: '', passkeys: [] });
+      assert.equal(p.state(), 'pick-notice', String(viaNotice));
+    }
+    p.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+    assert.equal(h.m.getState().owner, null);
+    await until(() => h.calls.autosave.length === 1, 'autosave');
+    assert.deepEqual(h.calls.autosave[0].doc.fields.map((f) => [f.htmlName, f.type]), [['username', 'text'], ['passkey', 'text']]);
+    assert.equal(p.last('card').card.combined, undefined);
+  }
+});
+
+test('pick: capture checks; Pick again reopens the popup; later fills are not taken', async () => {
+  const h = pickHarness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  pickStart(p);
+  const pk = '{"v":1,"credentialId":"x"}';
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com', password: pk, passkeys: [pk] }), true);
+  assert.deepEqual(p.last('card').card, { state: 'pick-notice', text: 'That item is a passkey, not a login with a password.' });
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com' }), true);
+  assert.deepEqual(p.last('card').card, { state: 'pick-notice', text: 'That login has no password.' });
+  const sent = p.sent.length;
+  assert.equal(h.m.handleCapture({}), true);                                // another frame: nothing for us
+  assert.equal(h.m.handleCapture(null), true);
+  assert.equal(p.sent.length, sent);
+  assert.equal(h.m.getState().owner.stage, 'pick-login');
+  p.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'again' });
+  assert.equal(p.state(), 'pick-login');
+  assert.equal(h.calls.showPopup.length, 2);
+  assert.equal(h.m.getState().owner.pick, 2);                               // a new pick number for the new attempt
+  assert.equal(h.calls.autosave.length, 0);
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com', password: 'pw' }), true);
+  await until(() => h.calls.autosave.length === 1, 'autosave');
+  assert.equal(h.calls.autosave[0].login.secureContents.fields[1].value, 'pw');
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com', password: 'late' }), false);
+});
+
+test('pick: no username uses the passkey account; a different username asks first', async () => {
+  let h = pickHarness(); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  pickStart(p);
+  h.m.handleCapture({ password: 'pw' });
+  await until(() => h.calls.autosave.length === 1, 'autosave');
+  assert.equal(h.calls.autosave[0].login.secureContents.fields[0].value, 'alice@example.com');
+  h = pickHarness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  pickStart(p);
+  h.m.handleCapture({ username: ' ALICE@example.com ', password: 'pw' });   // same account: trimmed, any case
+  await until(() => h.calls.autosave.length === 1, 'autosave same account');
+  assert.equal(h.calls.autosave[0].login.secureContents.fields[0].value, 'ALICE@example.com');
+  for (const choice of ['use', 'again', 'new']) {
+    h = pickHarness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    pickStart(p);
+    assert.equal(h.m.handleCapture({ username: 'bob', password: 'pw' }), true);
+    assert.deepEqual(p.last('card').card, { state: 'pick-mismatch', login: 'bob', account: 'alice@example.com' });
+    assert.equal(h.m.getState().owner.stage, 'pick-confirm');
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(h.calls.autosave.length, 0, 'nothing is sent before the choice');
+    p.emit({ type: 'approve', id: 'c1', stage: 'pick-confirm', choice });
+    if (choice === 'again') {
+      assert.equal(p.state(), 'pick-login');
+      assert.equal(h.calls.showPopup.length, 2);
+      assert.equal(h.m.getState().owner.pick, 2);
+      continue;
+    }
+    await until(() => h.calls.autosave.length === 1, 'autosave ' + choice);
+    const names = h.calls.autosave[0].login.secureContents.fields.map((x) => (x.name === 'passkey' ? 'PK' : x.value));
+    assert.deepEqual(names, choice === 'use' ? ['bob', 'pw', 'PK'] : ['alice@example.com', 'PK'], choice);
+  }
+});
+
+test('pick: busy behind a sign-in, promotion, tab change, inactive tab, timeout and abort', async () => {
+  const v = await vaultItem();
+  let h = pickHarness({ index: indexWith(v.made.credentialId) });
+  const pA = makePort(1, { id: 1, windowId: 10 }); const pB = makePort(2, { id: 2, windowId: 10 });
+  h.m.onConnect(pA); h.m.onConnect(pB);
+  pA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+  pB.emit({ type: 'request', id: 'C', kind: 'create', options: createOptions() });
+  pB.emit({ type: 'approve', id: 'C', stage: 'prompt', title: '' });
+  assert.equal(pB.state(), 'busy');
+  pA.emit({ type: 'decline', id: 'A', how: 'cancel' });
+  h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+  assert.equal(pB.state(), 'pick-login');
+  assert.equal(h.m.getState().owner.id, 'C');
+  h.setActive({ tabId: 3, windowId: 10 }); h.m.onTabActivated({ tabId: 3, windowId: 10 });
+  assert.equal(pB.last('reply').error.name, 'NotAllowedError');
+  assert.equal(h.m.getState().owner, null);
+  assert.equal(h.calls.recoveryPut.length, 0);
+  h = pickHarness(); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  pickStart(p);
+  h.setActive({ tabId: 9, windowId: 10 });
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com', password: 'pw' }), true);
+  assert.equal(p.state(), 'pick-login');                                      // a fill for another tab is not taken
+  h.setActive({ tabId: 1, windowId: 10 });
+  h.timers[0].fn();
+  assert.equal(p.last('reply').error.name, 'NotAllowedError');
+  assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
+  h = pickHarness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  pickStart(p);
+  p.emit({ type: 'cancel', id: 'c1' });
+  assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(h.calls.recoveryPut.length, 0);
+});
+
+test('pick: switch off saves at once; a missing or failing getSettings counts as on', async () => {
+  const h = harness({ addToExisting: false }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  pickStart(p);
+  await until(() => h.calls.autosave.length === 1, 'autosave');
+  assert.deepEqual(h.calls.showPopup, []);
+  for (const getSettings of [undefined, () => { throw new Error('storage'); }]) {
+    const m = createManager({
+      authenticator: A, index: { get: () => [], add() {} }, recovery: { async put() {}, async remove() {} },
+      showPopup: () => {}, autosave: () => {}, isConnected: () => true, getActive: () => ({ tabId: 1, windowId: 10 }),
+      setTimeout: () => ({}), clearTimeout: () => {}, getSettings,
+    });
+    const q = makePort(2, { id: 1, windowId: 10 }); m.onConnect(q);
+    pickStart(q);
+    assert.equal(q.state(), 'pick-login', String(getSettings));
   }
 });
