@@ -46,7 +46,15 @@ test('every state renders the spec copy and buttons', () => {
   assert.ok(card._root.textContent.includes('Sign in to github.com as alice with this passkey?'));
   card.show('not-connected');
   assert.deepEqual(buttons(card), ['Use another way', 'Cancel']);
-  assert.equal(Object.keys(TEXT).length, 9);
+  card.show('pick-login', { site: 'GitHub', name: 'Alice' });
+  assert.deepEqual(buttons(card), ['New login instead', 'Cancel']);
+  assert.ok(card._root.textContent.includes('Pick the login to add this passkey to in the 1Password popup…'));
+  assert.ok(card._root.textContent.includes('GitHub · Alice'));
+  card.show('pick-notice', { text: 'That login has no password.' });
+  assert.deepEqual(buttons(card), ['Pick again', 'New login instead', 'Cancel']);
+  card.show('pick-mismatch', { login: 'bob', account: 'alice' });
+  assert.deepEqual(buttons(card), ['Use this login', 'Pick again', 'New login instead', 'Cancel']);
+  assert.equal(Object.keys(TEXT).length, 12);
 });
 
 test('the page cannot reach the card: closed root, no global button', () => {
@@ -133,17 +141,56 @@ test('card renders as a full-viewport modal with a centered box', () => {
 });
 
 
-test('the saving card shows the Create New note only for 1Password 7', () => {
+test('the saving card notes: Create New with 1Password 7, the old-login note for a combined save', () => {
   const { card } = setup();
+  const notes = () => Array.from(card._root.querySelectorAll('.note:not(.ptitle)')).map((n) => n.textContent);
+  const CREATE_NEW = "Choose Create New there. Update existing would not save the passkey and would replace the selected login's username.";
+  const CREATE_NEW_COMBINED = "Choose Create New there. Update existing would not save the passkey and would replace the selected login's username and password.";
+  const OLD_LOGIN = 'Your old login stays in 1Password. Only its username and password were copied: move anything else you need, such as notes or one-time codes, then delete it.';
   card.show('create-saving', { app7: true });
-  const note = card._root.querySelector('.note');
-  assert.ok(note, 'note rendered');
-  assert.deepEqual(Array.from(note.querySelectorAll('b')).map((b) => b.textContent), ['Create New', 'Update existing']);
-  assert.equal(note.textContent, "Choose Create New there. Update existing would replace an existing login's password with this passkey.");
+  assert.deepEqual(notes(), [CREATE_NEW]);
+  assert.deepEqual(Array.from(card._root.querySelector('.note').querySelectorAll('b')).map((b) => b.textContent), ['Create New', 'Update existing']);
   assert.deepEqual(buttons(card), ['Done', 'Cancel']);
+  card.show('create-saving', { app7: true, combined: true, title: '[Passkey] Alice' });
+  assert.deepEqual(notes(), [CREATE_NEW_COMBINED, OLD_LOGIN]);
+  assert.ok(card._root.querySelector('.ptitle'), 'proposed title after the notes');
+  card.show('create-saving', { combined: true });
+  assert.deepEqual(notes(), [OLD_LOGIN]);
   card.show('create-saving');
   assert.equal(card._root.querySelector('.note'), null);
-  assert.deepEqual(buttons(card), ['Done', 'Cancel']);
+});
+
+test('pick cards: choices travel with the approval; script clicks do nothing', () => {
+  const t = setup({ isTrusted: () => true });
+  t.card.show('pick-login', { site: 'GitHub', name: 'Alice' });
+  t.advance(500);
+  button(t.card, 'New login instead').click();
+  t.card.show('pick-notice', { text: 'That item is a passkey, not a login with a password.' });
+  t.advance(500);
+  button(t.card, 'Pick again').click();
+  button(t.card, 'New login instead').click();
+  button(t.card, 'Cancel').click();
+  t.card.show('pick-mismatch', { login: 'bob', account: 'alice' });
+  t.advance(500);
+  const note = t.card._root.querySelector('.note');
+  assert.equal(note.textContent, 'The login you picked is for bob, the passkey for alice.');
+  assert.deepEqual(Array.from(note.querySelectorAll('b')).map((b) => b.textContent), ['bob', 'alice']);
+  button(t.card, 'Use this login').click();
+  button(t.card, 'Pick again').click();
+  button(t.card, 'New login instead').click();
+  assert.deepEqual(t.calls.approve, [
+    ['pick-login', { choice: 'new' }],
+    ['pick-login', { choice: 'again' }], ['pick-login', { choice: 'new' }],
+    ['pick-confirm', { choice: 'use' }], ['pick-confirm', { choice: 'again' }], ['pick-confirm', { choice: 'new' }],
+  ]);
+  assert.deepEqual(t.calls.decline, ['cancel']);
+  assert.equal(button(t.card, 'Use this login').dataset.action, 'approve');
+  assert.equal(button(t.card, 'Pick again').dataset.action, 'choose');
+  const u = setup();                                                          // untrusted clicks
+  u.card.show('pick-login', { site: 'GitHub', name: 'Alice' });
+  u.advance(1000);
+  button(u.card, 'New login instead').click();
+  assert.deepEqual(u.calls.approve, []);
 });
 
 const rowButtons = (card) => Array.from(card._root.querySelectorAll('.row button'));

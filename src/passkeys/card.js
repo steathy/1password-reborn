@@ -34,20 +34,46 @@
     '.row button:disabled{opacity:.45;cursor:default}',
   ].join('');
 
-  // [action, label, approvedStage?]
+  // [action, label, approvedStage?, choice?]. 'choose' is a secondary-looking button that approves
+  // with a choice, like 'approve'. Note segments are [text, bold].
+  // Update existing writes only the username and the password into the login selected there
+  // (WorkspaceItem.UpdateFromBrowser): it never saves the passkey, a passkey-only save changes that
+  // login's username, and a combined save overwrites its username and password.
+  const CREATE_NEW_NOTE = [['Choose ', false], ['Create New', true], [' there. ', false], ['Update existing', true],
+    [" would not save the passkey and would replace the selected login's username.", false]];
+  const CREATE_NEW_COMBINED_NOTE = [['Choose ', false], ['Create New', true], [' there. ', false], ['Update existing', true],
+    [" would not save the passkey and would replace the selected login's username and password.", false]];
+  const OLD_LOGIN_NOTE = [['Your old login stays in 1Password. Only its username and password were copied: move anything else you need, such as notes or one-time codes, then delete it.', false]];
+
   const TEXT = {
     'create-prompt': (d) => ({ title: 'Save this passkey in 1Password?', body: d.name ? d.site + ' · ' + d.name : d.site, input: d.defaultTitle || '',
       buttons: [['approve', 'Save in 1Password', 'prompt'], ['fallback', 'Use another way']] }),
     'create-excluded': (d) => ({ title: '1Password already has a passkey for this account.', body: d.site,
       buttons: [['fallback', 'Use another way'], ['cancel', 'Cancel']] }),
-    // With 1Password 7 (d.app7) a note: its save window preselects Update existing whenever the
-    // site already has a login. Note segments are [text, bold]. It also shows the proposed title
-    // (d.title) to edit or copy: 1Password 7.9 names the item after the site but keeps a title typed there.
-    'create-saving': (d) => ({ title: 'Confirm the save in the 1Password window, then click Done.',
-      note: d.app7 ? [['Choose ', false], ['Create New', true], [' there. ', false], ['Update existing', true],
-        [" would replace an existing login's password with this passkey.", false]] : undefined,
-      proposedTitle: d.app7 && typeof d.title === 'string' && d.title ? d.title : undefined,
-      buttons: [['approve', 'Done', 'saving'], ['cancel', 'Cancel']] }),
+    // With 1Password 7 (d.app7) the Create New note: its save window preselects Update existing
+    // whenever the site already has a login (always, for a save that copied an existing login), and
+    // Update existing would not save the passkey; the note says what it would change instead. A save
+    // that copied an existing login (d.combined) adds the old-login note. The proposed title
+    // (d.title) can be edited or copied: 1Password 7.9 names the item after the site but keeps a
+    // title typed there.
+    'create-saving': (d) => {
+      const notes = [];
+      if (d.app7) notes.push(d.combined ? CREATE_NEW_COMBINED_NOTE : CREATE_NEW_NOTE);
+      if (d.combined) notes.push(OLD_LOGIN_NOTE);
+      return { title: 'Confirm the save in the 1Password window, then click Done.',
+        notes: notes.length ? notes : undefined,
+        proposedTitle: d.app7 && typeof d.title === 'string' && d.title ? d.title : undefined,
+        buttons: [['approve', 'Done', 'saving'], ['cancel', 'Cancel']] };
+    },
+    'pick-login': (d) => ({ title: 'Pick the login to add this passkey to in the 1Password popup…',
+      body: d.name ? d.site + ' · ' + d.name : d.site,
+      buttons: [['choose', 'New login instead', 'pick-login', 'new'], ['cancel', 'Cancel']] }),
+    'pick-notice': (d) => ({ title: d.text || '',
+      buttons: [['approve', 'Pick again', 'pick-login', 'again'], ['choose', 'New login instead', 'pick-login', 'new'], ['cancel', 'Cancel']] }),
+    'pick-mismatch': (d) => ({ title: 'This login is for a different account.',
+      notes: [[['The login you picked is for ', false], [d.login || '', true], [', the passkey for ', false], [d.account || '', true], ['.', false]]],
+      buttons: [['approve', 'Use this login', 'pick-confirm', 'use'], ['choose', 'Pick again', 'pick-confirm', 'again'],
+        ['choose', 'New login instead', 'pick-confirm', 'new'], ['cancel', 'Cancel']] }),
     'get-prompt': (d) => ({ title: 'Use a passkey saved in 1Password?', body: d.site,
       buttons: [['approve', 'Yes', 'prompt'], ['fallback', 'Use another way']] }),
     'waiting': () => ({ title: 'Pick the item in the 1Password popup…',
@@ -212,9 +238,9 @@
       const brand = doc.createElement('div'); brand.className = 'brand'; brand.textContent = '1Password passkeys'; box.appendChild(brand);
       const h = doc.createElement('div'); h.className = 'title'; h.textContent = spec.title; box.appendChild(h);
       if (spec.body) { const b = doc.createElement('div'); b.className = 'body'; b.textContent = spec.body; box.appendChild(b); }
-      if (spec.note) {
+      for (const segs of spec.notes || []) {
         const n = doc.createElement('div'); n.className = 'note';
-        spec.note.forEach(([text, bold]) => {
+        segs.forEach(([text, bold]) => {
           if (!bold) { n.appendChild(doc.createTextNode(text)); return; }
           const el = doc.createElement('b'); el.textContent = text; n.appendChild(el);
         });
@@ -227,15 +253,18 @@
       const rowBtns = [];
       if (spec.proposedTitle) box.appendChild(titleNote(spec.proposedTitle, rowBtns));
       const row = doc.createElement('div'); row.className = 'row';
-      spec.buttons.forEach(([action, label, stage]) => {
+      spec.buttons.forEach(([action, label, stage, choice]) => {
         const btn = doc.createElement('button');
         btn.type = 'button'; btn.textContent = label; btn.dataset.action = action;
         btn.addEventListener('click', (ev) => {
           if (editing) return;                     // Done and Cancel wait for the title edit to end
           if (!isTrusted(ev)) return;              // page .click() / dispatchEvent: ignored
           if (nowMs() < armedAt) return;           // too soon after the card appeared
-          if (action === 'approve') onApprove(stage, input ? { title: input.value } : {});
-          else onDecline(action);                  // 'fallback' | 'cancel'
+          if (action === 'approve' || action === 'choose') {
+            const extra = input ? { title: input.value } : {};
+            if (choice) extra.choice = choice;
+            onApprove(stage, extra);
+          } else onDecline(action);                // 'fallback' | 'cancel'
         });
         row.appendChild(btn); rowBtns.push(btn);
       });
