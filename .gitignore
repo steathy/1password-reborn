@@ -2,8 +2,8 @@
 build/key.pem
 build/*.pem
 
-# Build artifacts. dist/ is committed (crx + extension.json + updates.xml) so
-# force-install works from GitHub over https and installs are build-tool-free.
+# Build artifacts. dist/ is committed (on this branch: the Firefox XPI + updates.json)
+# so installs are build-tool-free.
 build/staging/
 build/*.crx
 build/*.reg

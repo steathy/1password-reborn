@@ -71,8 +71,9 @@ It downloads this repo, then shows a menu:
   extensions, so those clicks are yours.) No admin, works on any machine. The only
   ongoing cost is the browser's dismissable "Disable developer-mode extensions" bubble.
 - **Uninstall** removes a force-install policy that the main version set up (that copy of
-  Reborn would otherwise run next to this one). This edition does not force-install:
-  1Password 7 does not admit the force-install build's extension ID.
+  Reborn would otherwise run next to this one); running [`uninstall.ps1`](uninstall.ps1)
+  does the same. This edition does not force-install: 1Password 7 does not admit the
+  force-install build's extension ID.
 - **Firefox** opens the unsigned 1Password 7 build in Developer Edition, Nightly or ESR.
   See [Firefox](#firefox) below. Nothing is written to Firefox's profile.
 
@@ -107,8 +108,8 @@ order Chrome imports them.
   or use `about:addons` → gear → Check for Updates. The unsigned build updates only where
   signature checking is off, which is already true where it runs.
 - **Remove** it in `about:addons`. The installer never edits Firefox's preferences.
-- The installer's **[4] Firefox** entry detects your Firefox channels and 1Password app and
-  opens the matching XPI; it explains the `about:config` step for the unsigned build.
+- The installer's **[4] Firefox** entry detects your Firefox channels and 1Password 7 and
+  opens the XPI in Developer Edition, Nightly or ESR; it explains the `about:config` step.
 - Not covered: Firefox for Android, macOS and Linux, and enterprise-policy installs.
 
 ## Moving from 1password4-mv3
@@ -195,8 +196,6 @@ reopen your browser** — a plain extension reload isn't enough for the first pa
 Note the agent is a **separate, long-lived process** — quitting 1Password alone does
 not restart it, so the setting won't take effect until you kill the agent too.
 
-**Uninstall:** menu option 3, or run [`uninstall.ps1`](uninstall.ps1).
-
 > Forking: change `$Owner` / `$Repo` / `$Branch` at the top of `install.ps1` and the
 > `irm` URL above to point at your own repo.
 
@@ -274,15 +273,18 @@ dimmed page:
 **Where the key lives.** Inside the item's encrypted details, exactly as protected as the
 password next to it (OPVault encryption, ciphertext on Dropbox, the encrypted channel to
 the app). The field's JSON follows Bitwarden's `fido2Credentials` schema;
-`tools/1pif-to-bitwarden.js` turns a 1Password 4 export (classic 1PIF, or the
-OPVault-style JSON that 1Password 4.6 for Windows writes under File → Export) into a
-Bitwarden JSON import that restores working passkeys (items in the trash are skipped; the
-tool refuses to write over its input file). It reads both kinds of items: the passkey
-field of earlier versions and this edition's "Saved on &lt;site&gt;" text field, and it carries
-a combined login's own password. Do not run passkey items through Bitwarden's own 1PIF
-importer (search for the tag `passkey` to find them): it would copy the private key into a
-visible Bitwarden password or field. Editing the passkey field by hand breaks the passkey;
-Dropbox's file history is the undo.
+`tools/1pif-to-bitwarden.js` turns a 1PIF export into a Bitwarden JSON import that
+restores working passkeys (items in the trash are skipped; the tool refuses to write over
+its input file). 1Password 7 for Windows exports the items you select: right-click them →
+**Export** → *1Password Interchange Format (.1pif)*. 1Password 4 exports under File →
+Export (classic 1PIF, or the OPVault-style JSON that 1Password 4.6 for Windows writes).
+The tool reads both kinds of items: the passkey field of earlier versions and this
+edition's "Saved on &lt;site&gt;" text field, and it carries a combined login's own
+password. Do not run passkey items through Bitwarden's own 1PIF importer: it would copy
+the private key into a visible Bitwarden password or field. To find them, look for logins
+with a `passkey` field under "Saved on &lt;site&gt;", or give them the tag `passkey` in
+1Password 7's save window (1Password 7 does not keep the tag Reborn sends). Editing the
+passkey field by hand breaks the passkey; Dropbox's file history is the undo.
 
 **Limitations.**
 - Chromium 111+ or Firefox 140+ (verified in Firefox 158 in the 1.5.0 gates); top-level frames; modal requests only. Sites that use the browser's

@@ -3,7 +3,7 @@
 
   Run it either way:
     * One command (no clone needed):
-        irm https://raw.githubusercontent.com/YOUR_GH_USER/1password-reborn/main/install.ps1 | iex
+        irm https://raw.githubusercontent.com/YOUR_GH_USER/1password-reborn/1pass7/install.ps1 | iex
     * From a local clone: double-click install.bat, or right-click -> Run with PowerShell.
 
   It shows a menu:

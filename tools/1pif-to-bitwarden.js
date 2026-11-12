@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 /*
- * 1pif-to-bitwarden.js — turn a 1Password 4 **1PIF** export into a Bitwarden JSON
+ * 1pif-to-bitwarden.js — turn a 1Password **1PIF** export into a Bitwarden JSON
  * import that restores the passkeys as working Bitwarden passkeys.
  *
  *   node tools/1pif-to-bitwarden.js <export.1pif> <out.json>
  *   then Bitwarden → Tools → Import data → "Bitwarden (json)"
  *
+ * Exports: 1Password 7 for Windows - select the items, right-click → Export →
+ * 1Password Interchange Format (.1pif); 1Password 4 - File → Export.
  * Both export layouts are read: the classic 1PIF records, and the OPVault-style JSON
- * that 1Password 4.6 for Windows writes. Only items carrying a `passkey` field are
- * converted, and items in the trash (`trashed: true`) are skipped. The tool refuses to
+ * that 1Password 4.6 for Windows writes. Only items carrying a passkey are converted
+ * (a `passkey` field, or a `passkey` field in a section such as 1Password 7's
+ * "Saved on <site>"), and items in the trash (`trashed: true`) are skipped. The tool refuses to
  * run when the output path is the input file. CSV exports are not supported: 1Password 4's CSV drops web-form fields.
  * The 1PIF file is PLAIN TEXT; delete both files after importing.
  *
