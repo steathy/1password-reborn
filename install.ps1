@@ -8,9 +8,10 @@
 
   It shows a menu:
     [1] Load unpacked  - no admin; stages files and you click 'Load unpacked' once
-    [2] Force install  - policy install; no dev-mode nag, can't be user-disabled (needs admin)
-    [3] Uninstall      - remove the force-install policy
-    [4] Firefox        - opens the Firefox build: signed (1Password 4) or unsigned (1Password 7)
+    [3] Uninstall      - remove a force-install policy left by the main version
+    [4] Firefox        - opens the unsigned 1Password 7 build (Developer Edition, Nightly or ESR)
+  1Password 7 edition: 1Password 7 for Windows only. Force install needs a crx ID that 1Password 7's
+  browser host does not admit, so this edition does not force-install; [3] still removes such a policy.
 
   When run via irm|iex it downloads this repo's zip to %LOCALAPPDATA%\1Password-Reborn
   and installs from there. Review this script before running it - irm|iex executes
@@ -20,7 +21,7 @@
   variables only; no window, no menu).
 #>
 param(
-  [ValidateSet('', 'force', 'unpacked', 'uninstall', 'firefox')]
+  [ValidateSet('', 'unpacked', 'uninstall', 'firefox')]
   [string]$Mode = '',
   [string]$PayloadRoot = '',  # internal: set when self-elevating to an already-staged path
   [switch]$FunctionsOnly      # internal: define the functions and return (tests dot-source this file)
@@ -30,21 +31,15 @@ $ErrorActionPreference = 'Stop'
 # ===== Published GitHub repo (change if you fork) =====
 $Owner  = 'steathy'
 $Repo   = '1password-reborn'
-$Branch = 'main'
+$Branch = '1pass7'
 # ======================================================
 
 $InstallDir    = Join-Path $env:LOCALAPPDATA '1Password-Reborn'
 $OldInstallDir = Join-Path $env:LOCALAPPDATA '1Password4-MV3'   # staged by the 1password4-mv3 installer; not migrated, only pointed out
 $RawBase    = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch"
-# Force-install fetches this manifest (and the crx it points to) over https from
-# GitHub. NOTE: Chrome only honors off-Web-Store force-install on ENTERPRISE-MANAGED
-# devices; on a normal personal PC it is blocked, so load-unpacked is the default.
-$UpdateUrl  = "$RawBase/dist/updates.xml"
-# Firefox builds (dist\firefox, built by build\pack-firefox.js). The 1Password 4 build is signed
-# by Mozilla and installs in any Firefox 140+; the 1Password 7 build is unsigned (its gecko ID
-# belongs to AgileBits, so Mozilla will not sign it) and needs Developer Edition, Nightly or ESR.
-$FirefoxXpiSigned   = 'dist\firefox\1password-reborn-firefox.xpi'
+# The Firefox build (dist\firefox, built by build\pack-firefox.js): unsigned, because its gecko ID belongs to AgileBits; it needs Developer Edition, Nightly or ESR.
 $FirefoxXpiUnsigned = 'dist\firefox\1password-reborn-firefox-1p7.xpi'
+$ForceInstallId = 'mmfoigkanhpccidpokhjnomdcmgmjomj'   # the main version's signed crx (build/key.pem); [3] removes its force-install policy
 
 # ---- MAS-style dedicated window --------------------------------------------
 # Run the interactive menu in its own console window (like Microsoft Activation
@@ -117,17 +112,6 @@ public struct FONTINFO {
   } catch {}
 }
 
-function Test-Managed {
-  # Chrome allows off-Web-Store force-install only on enterprise-managed devices.
-  try { if ((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).PartOfDomain) { return $true } } catch {}
-  try {
-    $ds = (& dsregcmd /status 2>$null) -join "`n"
-    if ($ds -match 'AzureAdJoined\s*:\s*YES' -or
-        $ds -match 'DomainJoined\s*:\s*YES' -or
-        $ds -match 'EnterpriseJoined\s*:\s*YES') { return $true }
-  } catch {}
-  return $false
-}
 function Test-Admin {
   (New-Object Security.Principal.WindowsPrincipal(
     [Security.Principal.WindowsIdentity]::GetCurrent())
@@ -181,8 +165,8 @@ function Restart-Agent {
   Write-Host "Restarted 1Password + agent - reopen 1Password 4 and UNLOCK it." -ForegroundColor Cyan
 }
 function Test-Payload($root) {
-  $root -and (Test-Path (Join-Path $root 'dist\1password-reborn.crx')) `
-        -and (Test-Path (Join-Path $root 'dist\extension.json'))
+  $root -and (Test-Path (Join-Path $root 'src\manifest.json')) `
+        -and (Test-Path (Join-Path $root 'dist\firefox\1password-reborn-firefox-1p7.xpi'))
 }
 function Get-RemoteSha {
   # The branch head commit SHA is a cheap content fingerprint - a few bytes over
@@ -287,44 +271,6 @@ function Show-OP7EdgeWarning {
   Write-Host ''
 }
 
-function Install-Force($payload) {
-  $extId = (Get-Content (Join-Path $payload 'dist\extension.json') -Raw | ConvertFrom-Json).id
-  if (-not (Test-Admin)) {
-    if (-not (Test-Managed)) {
-      Write-Host ''
-      Write-Mid 'This PC is not enterprise-managed, so Chrome will BLOCK a' 'Yellow'
-      Write-Mid 'force-install of any non-Web-Store extension (chrome://policy' 'Yellow'
-      Write-Mid 'shows it [BLOCKED]). Load unpacked works on any PC.' 'Yellow'
-      Write-Host ''
-      if ((Read-Host ((' ' * (Get-Margin)) + 'Use Load unpacked instead? [Y/n]')).Trim().ToLower() -ne 'n') {
-        Install-Unpacked $payload; return
-      }
-      Write-Mid 'Proceeding with force-install (works only on a managed device).' 'Gray'
-    }
-    Invoke-Elevated $payload 'force'; return
-  }
-
-  # Policy value: "<id>;<update-manifest-url>". The manifest and crx are served over
-  # https from GitHub, so nothing local needs to persist for force-install.
-  $key = 'HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist'
-  New-Item -Path $key -Force | Out-Null
-  $item = Get-Item -Path $key; $target = $null; $max = 0
-  foreach ($n in $item.GetValueNames()) {
-    if ($n -eq '') { continue }
-    if (([string]$item.GetValue($n)) -like "$extId;*") { $target = $n }
-    if ($n -match '^\d+$' -and [int]$n -gt $max) { $max = [int]$n }
-  }
-  if (-not $target) { $target = [string]($max + 1) }
-  Set-ItemProperty -Path $key -Name $target -Value "$extId;$UpdateUrl"
-
-  Write-Host ''
-  Write-Mid 'Force-install policy set for extension:' 'Green'
-  Write-Mid ('  ' + $extId) 'Green'
-  Restart-Chrome
-  Write-Host ''
-  Write-Mid "chrome://extensions should show 'Installed by policy'." 'Gray'
-  Write-Mid 'If not: chrome://policy -> Reload policies, then restart Chrome.' 'Gray'
-}
 function Install-Unpacked($payload) {
   $src = Join-Path $payload 'src'
   if (-not (Test-Path $src)) { throw "Missing $src." }
@@ -446,7 +392,7 @@ function Install-Unpacked($payload) {
 }
 function Uninstall-Force($payload) {
   if (-not (Test-Admin)) { Invoke-Elevated $payload 'uninstall'; return }
-  $extId = (Get-Content (Join-Path $payload 'dist\extension.json') -Raw | ConvertFrom-Json).id
+  $extId = $ForceInstallId
   $key   = 'HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist'
   if (Test-Path $key) {
     $item = Get-Item -Path $key
@@ -495,40 +441,20 @@ function Get-FirefoxInstalls {
   }
   return ,$found
 }
-function Test-OP4Installed { return [bool](Test-Path 'HKCU:\Software\AgileBits\1Password 4') }
-
 function Resolve-FirefoxPlan {
-  # The decision table behind [4] Firefox Pure: no I/O.
-  #   1Password 4 only              -> open-signed in a release/beta Firefox (else any)
-  #   1Password 7 only, DevEd/Nightly/ESR -> open-unsigned there; release only -> needs-dev-edition
-  #   both apps                     -> ask-app until -AppChoice is '4' or '7'
-  #   neither                       -> ask-anyway until -AnywayAnswer; 'y' -> open-signed, else declined
+  # The decision table behind [4] Firefox. Pure: no I/O. 1Password 7 edition: always the unsigned build.
+  #   1Password 7 found             -> open-unsigned in Developer Edition/Nightly/ESR; release only -> needs-dev-edition
+  #   no 1Password 7                -> ask-anyway until -AnywayAnswer; 'y' -> as above, else declined
   #   no Firefox                    -> no-firefox
   param(
     [array]$Firefoxes,
-    [bool]$HasOP4,
     $OP7Version,
-    [string]$AppChoice = '',
     [string]$AnywayAnswer = ''
   )
   if (-not $Firefoxes -or $Firefoxes.Count -eq 0) { return @{ Action = 'no-firefox' } }
-  $hasOP7 = ($null -ne $OP7Version)
-  $app = ''
-  if ($HasOP4 -and $hasOP7) {
-    if ($AppChoice -eq '4' -or $AppChoice -eq '7') { $app = $AppChoice } else { return @{ Action = 'ask-app' } }
-  } elseif ($HasOP4) {
-    $app = '4'
-  } elseif ($hasOP7) {
-    $app = '7'
-  } else {
+  if ($null -eq $OP7Version) {
     if ($AnywayAnswer -eq '') { return @{ Action = 'ask-anyway' } }
     if ($AnywayAnswer.Trim().ToLower() -ne 'y') { return @{ Action = 'declined' } }
-    $app = '4'
-  }
-  if ($app -eq '4') {
-    $ff = $Firefoxes | Where-Object { -not $_.Unsigned } | Select-Object -First 1
-    if (-not $ff) { $ff = $Firefoxes[0] }
-    return @{ Action = 'open-signed'; Firefox = $ff; Xpi = $FirefoxXpiSigned }
   }
   $ff = $Firefoxes | Where-Object { $_.Unsigned } | Select-Object -First 1
   if ($ff) { return @{ Action = 'open-unsigned'; Firefox = $ff; Xpi = $FirefoxXpiUnsigned } }
@@ -552,27 +478,15 @@ function Install-Firefox($payload) {
   Write-Mid '=== Firefox ===' 'Cyan'
   Write-Host ''
   $ffs  = Get-FirefoxInstalls
-  $op4  = Test-OP4Installed
   $op7  = Get-OP7Version
-  $plan = Resolve-FirefoxPlan -Firefoxes $ffs -HasOP4 $op4 -OP7Version $op7
-  if ($plan.Action -eq 'ask-app') {
-    Write-Mid 'Both 1Password 4 and 1Password 7 are installed.' 'White'
-    Write-Mid 'Which one should Firefox pair with?' 'White'
-    Write-Host ''
-    Write-MidSeg @( @{T = '[4] '; C = 'Green' }, @{T = '1Password 4 - signed build, any Firefox'; C = 'White' } )
-    Write-MidSeg @( @{T = '[7] '; C = 'Green' }, @{T = '1Password 7 - unsigned build, Dev Edition/Nightly/ESR'; C = 'White' } )
-    Write-Host ''
-    $a = (Read-Host ((' ' * (Get-Margin)) + 'Choose')).Trim()
-    $plan = Resolve-FirefoxPlan -Firefoxes $ffs -HasOP4 $op4 -OP7Version $op7 -AppChoice $a
-    if ($plan.Action -eq 'ask-app') { Write-Mid 'No choice made. Nothing was opened.' 'Gray'; return }
-  }
+  $plan = Resolve-FirefoxPlan -Firefoxes $ffs -OP7Version $op7
   if ($plan.Action -eq 'ask-anyway') {
-    Write-Mid 'No 1Password 4 or 1Password 7 app was found on this PC.' 'Yellow'
-    Write-Mid 'The extension needs one of them to do anything.' 'Gray'
+    Write-Mid 'No 1Password 7 app was found on this PC.' 'Yellow'
+    Write-Mid 'This edition of the extension needs 1Password 7.' 'Gray'
     Write-Host ''
-    $a = (Read-Host ((' ' * (Get-Margin)) + 'Open the signed Firefox build anyway? [y/N]')).Trim()
+    $a = (Read-Host ((' ' * (Get-Margin)) + 'Open the 1Password 7 Firefox build anyway? [y/N]')).Trim()
     if ($a -eq '') { $a = 'n' }
-    $plan = Resolve-FirefoxPlan -Firefoxes $ffs -HasOP4 $op4 -OP7Version $op7 -AnywayAnswer $a
+    $plan = Resolve-FirefoxPlan -Firefoxes $ffs -OP7Version $op7 -AnywayAnswer $a
   }
   switch ($plan.Action) {
     'no-firefox' {
@@ -593,7 +507,6 @@ function Install-Firefox($payload) {
       Read-Host ((' ' * (Get-Margin)) + 'Press Enter when that is done') | Out-Null
       Open-FirefoxXpi $payload $plan
     }
-    'open-signed' { Open-FirefoxXpi $payload $plan }
   }
 }
 
@@ -610,7 +523,6 @@ if ($Mode) {
   try { $Host.UI.RawUI.WindowTitle = '1Password Reborn' } catch {}
   $payload = Get-Payload
   switch ($Mode) {
-    'force'     { Install-Force     $payload }
     'unpacked'  { Install-Unpacked  $payload }
     'uninstall' { Uninstall-Force   $payload }
     'firefox'   { Install-Firefox   $payload }
@@ -644,9 +556,8 @@ while ($true) {
   Write-Host ''
   $rows = @(
     @{ Key = '[1]'; KeyColor = 'Green';  Label = 'Load unpacked'; Hint = 'recommended - any PC, no admin' },
-    @{ Key = '[2]'; KeyColor = 'Yellow'; Label = 'Force install'; Hint = 'no dev-mode nag, managed devices only' },
-    @{ Key = '[3]'; KeyColor = 'Yellow'; Label = 'Uninstall';     Hint = 'remove the force-install policy' },
-    @{ Key = '[4]'; KeyColor = 'Green';  Label = 'Firefox';       Hint = 'signed build for 1Password 4; unsigned for 7' },
+    @{ Key = '[3]'; KeyColor = 'Yellow'; Label = 'Uninstall';     Hint = 'remove a policy left by the main version' },
+    @{ Key = '[4]'; KeyColor = 'Green';  Label = 'Firefox';       Hint = 'unsigned build for 1Password 7' },
     @{ Key = '[0]'; KeyColor = 'Red';    Label = 'Quit';          Hint = '' }
   )
   $labelW = 15; $first = $true
@@ -662,11 +573,10 @@ while ($true) {
   Show-OldInstallNotice $payload
   $choice = (Read-Host ((' ' * (Get-Margin)) + 'Choose')).Trim().ToLower()
   if ($choice -eq '0' -or $choice -eq 'q') { break }
-  if ($choice -notin '1', '2', '3', '4') { continue }
+  if ($choice -notin '1', '3', '4') { continue }
   try {
     switch ($choice) {
       '1' { Install-Unpacked $payload }
-      '2' { Install-Force    $payload }
       '3' { Uninstall-Force  $payload }
       '4' { Install-Firefox  $payload }
     }

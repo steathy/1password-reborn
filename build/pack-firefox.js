@@ -3,21 +3,15 @@
 /*
  * pack-firefox.js — build the Firefox XPIs for 1Password Reborn from src/.
  *
- * Two variants, same files, different gecko ID:
- *   1p4  1password-reborn@steathy.github.io   for 1Password 4 (WebSocket), Mozilla-signed
- *   1p7  onepassword4@agilebits.com           for 1Password 7 (native messaging), unsigned
- *
- * For each variant: copy src/ (minus _metadata/) to build/staging-firefox/<key>/, write a
- * Firefox manifest.json (background.scripts instead of the service worker; gecko ID,
- * strict_min_version, update_url, the data-collection declaration, a CSP override without
- * upgrade-insecure-requests, and the Firefox-only webRequestBlocking and ws://127.0.0.1/*
- * permissions for shim 7), run
- * `web-ext lint --self-hosted` (zero errors, only the expected warnings), then `web-ext build`.
- *   1p7 -> dist/firefox/1password-reborn-firefox-1p7.xpi           (committed as is)
- *   1p4 -> build/staging-firefox/unsigned/1password-reborn-firefox.xpi
- *          (the committed dist/firefox/1password-reborn-firefox.xpi is the Mozilla-SIGNED
- *          copy, produced by `web-ext sign` on build/staging-firefox/1p4; never overwritten here)
- * Finally dist/firefox/updates.json gets both IDs at src/manifest.json's version.
+ * 1Password 7 edition (branch 1pass7): one variant,
+ *   1p7  onepassword4@agilebits.com   for 1Password 7 (native messaging), unsigned
+ * copied from src/ (minus _metadata/) to build/staging-firefox/1p7/, given a Firefox manifest.json
+ * (background.scripts instead of the service worker; gecko ID, strict_min_version, update_url on
+ * this branch, the data-collection declaration, a CSP override without upgrade-insecure-requests,
+ * and the Firefox-only webRequestBlocking and ws://127.0.0.1/* permissions for shim 7), linted
+ * with `web-ext lint --self-hosted` (zero errors, only the expected warnings) and built with
+ * `web-ext build` into dist/firefox/1password-reborn-firefox-1p7.xpi (committed as is).
+ * Finally dist/firefox/updates.json gets the ID at src/manifest.json's version.
  *
  * Usage:  node build/pack-firefox.js            stage + lint + build + updates.json
  *         node build/pack-firefox.js --stage-only
@@ -32,7 +26,7 @@ const SRC = path.join(ROOT, 'src');
 const DIST_FIREFOX = path.join(ROOT, 'dist', 'firefox');
 const STAGING = path.join(__dirname, 'staging-firefox');
 
-const RAW_BASE = 'https://raw.githubusercontent.com/steathy/1password-reborn/main';
+const RAW_BASE = 'https://raw.githubusercontent.com/steathy/1password-reborn/1pass7';   // the 1Password 7 edition's own update channel
 const UPDATE_URL = RAW_BASE + '/dist/firefox/updates.json';
 const STRICT_MIN_VERSION = '140.0';
 // Mozilla requires this for every extension first signed after 2025-11-03. The types are
@@ -41,8 +35,9 @@ const STRICT_MIN_VERSION = '140.0';
 // (tests/engine-inventory.test.js). Both variants carry it.
 const DATA_COLLECTION = { required: ['authenticationInfo', 'browsingActivity', 'websiteContent'] };
 
+// 1Password 7 edition (branch 1pass7): only the unsigned 1Password 7 build; the signed 1Password 4
+// build belongs to the main version.
 const VARIANTS = [
-  { key: '1p4', id: '1password-reborn@steathy.github.io', xpi: '1password-reborn-firefox.xpi', app: '1Password 4', signed: true },
   { key: '1p7', id: 'onepassword4@agilebits.com', xpi: '1password-reborn-firefox-1p7.xpi', app: '1Password 7', signed: false },
 ];
 
