@@ -1,5 +1,7 @@
 # Browser compatibility
 
+> 1Password 7 edition: only the 1Password 7 rows apply to this branch; the 1Password 4 rows describe the main version.
+
 Whether a browser can pair with the 1Password desktop app does **not** depend on the
 browser being Chromium-based. The app checks the **Windows code-signing publisher** of the
 connecting browser against a built-in list (and, in newer 1Password 7, also verifies the

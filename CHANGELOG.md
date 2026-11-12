@@ -5,6 +5,35 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
+## [1.6.0-1p7] - unreleased
+
+1Password 7 edition, branch `1pass7` (1Password 7 for Windows only). The main version stays the
+one for 1Password 4 and 7 with one item per passkey.
+
+### Added
+- **Passkey and password in one login.** New passkeys are saved as a text field that 1Password 7
+  keeps under "Saved on <site>"; a later password update keeps the passkey.
+- **Add a passkey to an existing login:** after *Save in 1Password*, pick the site's login in the
+  1Password popup; its username and password go into one new item with the passkey. A card asks
+  first when the login's username differs from the passkey's account.
+- Menu switch **1Password passkeys → Add new passkeys to an existing login** (on by default).
+
+### Changed
+- Passkey sign-in reports a hidden password field and a hidden text field `passkey`, so a login's
+  own password no longer hides its passkey; older passkey items keep working.
+- `tools/1pif-to-bitwarden.js` reads the "Saved on <site>" passkey and keeps a combined login's
+  password.
+- Firefox: only the unsigned 1Password 7 build, updating from this branch.
+
+### Fixed
+- Picking a login without a passkey during a passkey sign-in shows "That item has no passkey.
+  Pick another." instead of waiting silently.
+
+### Removed
+- Force install (its extension ID is not admitted by 1Password 7) and the signed 1Password 4
+  Firefox build: use the main version for those. The installer's **[3] Uninstall** still removes
+  a force-install policy left by the main version.
+
 ## [1.5.0] - 2026-10-31
 
 ### Added

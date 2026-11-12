@@ -2,6 +2,11 @@
 
 The classic 1Password extension, reborn for today's browsers — now with passkeys.
 
+> **1Password 7 edition (1.6.0-1p7).** This branch, `1pass7`, is for **1Password 7 for Windows
+> only** (up to 7.9.834, the last release that serves the classic extension). It keeps a site's
+> **password and passkey in one login**. For 1Password 4, use the main version (one item per
+> passkey): <https://github.com/steathy/1password-reborn/tree/main>.
+
 > **Unofficial community port — not affiliated with, authorized by, or endorsed by
 > 1Password / AgileBits.** "1Password" and "AgileBits" are trademarks of their owner.
 > This exists only to keep discontinued products (the 1Password 4–7 desktop apps, with
@@ -46,16 +51,15 @@ original used — native messaging (`2bua8c4s2c.com.agilebits.1password`) and a
 Open **Windows PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/steathy/1password-reborn/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/steathy/1password-reborn/1pass7/install.ps1 | iex
 ```
 
 It downloads this repo, then shows a menu:
 
 ```
 [1] Load unpacked   (recommended; works on any PC, no admin)
-[2] Force install   (no dev-mode nag, but ENTERPRISE-MANAGED devices only)
-[3] Uninstall       (remove force-install policy)
-[4] Firefox         (signed build for 1Password 4; unsigned build for 1Password 7)
+[3] Uninstall       (remove a force-install policy left by the main version)
+[4] Firefox         (unsigned build for 1Password 7)
 ```
 
 - **Load unpacked** (recommended) stages the files under
@@ -66,16 +70,11 @@ It downloads this repo, then shows a menu:
   path. (Browsers block scripts from opening the extensions page or adding unpacked
   extensions, so those clicks are yours.) No admin, works on any machine. The only
   ongoing cost is the browser's dismissable "Disable developer-mode extensions" bubble.
-- **Force install** writes a browser policy pointing at the signed crx hosted on
-  GitHub over https — no dev-mode nag, can't be disabled. **But it only works on
-  enterprise-managed devices.** On a normal personal PC the browser **blocks**
-  policy-installing any extension that isn't in its web store (`chrome://policy`
-  shows it as `[BLOCKED]` with *"not detected as enterprise managed"*). The installer
-  detects this and offers to switch you to load-unpacked. See
-  [Force install on a personal PC](#force-install-on-a-personal-pc) below.
-- **Firefox** opens the right XPI in Firefox for you: the Mozilla-signed build if 1Password 4
-  is installed, the unsigned 1Password 7 build in Developer Edition, Nightly or ESR if only
-  1Password 7 is. See [Firefox](#firefox) below. Nothing is written to Firefox's profile.
+- **Uninstall** removes a force-install policy that the main version set up (that copy of
+  Reborn would otherwise run next to this one). This edition does not force-install:
+  1Password 7 does not admit the force-install build's extension ID.
+- **Firefox** opens the unsigned 1Password 7 build in Developer Edition, Nightly or ESR.
+  See [Firefox](#firefox) below. Nothing is written to Firefox's profile.
 
 > `irm … | iex` runs remote code — review [`install.ps1`](install.ps1) first if you like.
 > The same script works from a local clone too: double-click **`install.bat`**.
@@ -87,13 +86,13 @@ It downloads this repo, then shows a menu:
 
 ## Firefox
 
-Since 1.5.0 Reborn also ships for Firefox (140 or later), as two XPIs under
-[`dist/firefox/`](dist/firefox/). Same engine, same shims, same passkeys; the Firefox
-manifest lists the background files in the order Chrome imports them.
+The 1Password 7 edition ships one XPI under [`dist/firefox/`](dist/firefox/), unsigned
+(its add-on ID is AgileBits' own, which Mozilla cannot sign for another developer). Same
+engine, same shims, same passkeys; the Firefox manifest lists the background files in the
+order Chrome imports them.
 
 | Build | For | Signed | Install |
 | --- | --- | --- | --- |
-| `1password-reborn-firefox.xpi` | 1Password 4 (pairs over its local WebSocket) | yes, by Mozilla (unlisted) | any Firefox 140+: open the file, click **Add** |
 | `1password-reborn-firefox-1p7.xpi` | 1Password 7 (native messaging; its host only allows AgileBits' extension ID) | no, Mozilla cannot sign another developer's ID | Developer Edition, Nightly or ESR with `xpinstall.signatures.required = false` in `about:config` |
 
 - **The install prompt lists data the extension handles**: authentication information,
@@ -103,24 +102,13 @@ manifest lists the background files in the order Chrome imports them.
   fill them). Nothing goes to any server or to the developer; there is no telemetry. The
   retired "Report website issue" command of the original extension is disabled so that
   stays true.
-- **Updates** come from this repo over https (`dist/firefox/updates.json`); Firefox checks
-  on its usual schedule, or use `about:addons` → gear → Check for Updates. The unsigned
-  build updates only where signature checking is off, which is already true where it runs.
+- **Updates** come from this repo over https (`dist/firefox/updates.json` on the `1pass7`
+  branch, so it never switches to the main version); Firefox checks on its usual schedule,
+  or use `about:addons` → gear → Check for Updates. The unsigned build updates only where
+  signature checking is off, which is already true where it runs.
 - **Remove** it in `about:addons`. The installer never edits Firefox's preferences.
 - The installer's **[4] Firefox** entry detects your Firefox channels and 1Password app and
   opens the matching XPI; it explains the `about:config` step for the unsigned build.
-- **How it reaches 1Password 4:** 1Password 4 (2017) answers only browser extensions it
-  recognizes by origin, and a Firefox WebExtension is not one of them. So the extension
-  presents its own connection to 1Password 4 (`ws://127.0.0.1`, nothing else) under the
-  origin of AgileBits' original Firefox add-on, and keeps that local connection on plain
-  `ws://`, which Firefox would otherwise upgrade. That is why the Firefox manifests request
-  blocking request access and `ws://127.0.0.1` (Firefox lists it as "Access your data for
-  ws://127.0.0.1"); no other request is changed, and web pages cannot use it. Once paired, the engine encrypts what it sends over that connection.
-- **Keep the "Access your data for ws://127.0.0.1" permission on.** The 1Password 4 build needs it
-  (`about:addons` → 1Password Reborn → Permissions). If you turn it off, the connection to
-  1Password 4 stops and the app never answers.
-- **Install only the one XPI that matches your 1Password app.** The two builds have different
-  IDs, so Firefox would accept both, and two copies would both inject into pages and run the engine.
 - Not covered: Firefox for Android, macOS and Linux, and enterprise-policy installs.
 
 ## Moving from 1password4-mv3
@@ -135,11 +123,9 @@ install Reborn fresh.
   `src` folder by hand. Approve pairing if the 1Password app asks. Do not run the
   `install.bat` inside the old `%LOCALAPPDATA%\1Password4-MV3` folder: it is the old
   installer and reinstalls 1password4-mv3.
-- **Force install:** run the installer's **Uninstall**, let the browser remove the
-  extension (`chrome://policy` → **Reload policies**, then restart the browser), then
-  choose **Force install**. Force installs made before 1.4.0 never received updates from
-  GitHub (the crx had no `update_url`); the 1.4.0 crx carries one, so a fresh force install
-  updates from GitHub. Not tested on a managed device.
+- **Force install:** this edition does not force-install. Run the installer's
+  **Uninstall**, let the browser remove the extension (`chrome://policy` → **Reload
+  policies**, then restart the browser), then choose **Load unpacked**.
 - **The old folder:** delete `%LOCALAPPDATA%\1Password4-MV3` by hand once no browser or
   profile loads from it. The installer only points it out.
 
@@ -209,31 +195,7 @@ reopen your browser** — a plain extension reload isn't enough for the first pa
 Note the agent is a **separate, long-lived process** — quitting 1Password alone does
 not restart it, so the setting won't take effect until you kill the agent too.
 
-### Force install on a personal PC
-
-Off-web-store force-install is only honored on **enterprise-managed** devices (AD
-domain, Azure AD, or MDM enrolled). To get the no-nag force-install on a personal
-machine you have to make the browser see the device as managed — the clean,
-legitimate way is free **[Chrome Browser Cloud Management](https://support.google.com/chrome/a/answer/9116814)**:
-create an enrollment token in the Google Admin console and set it at
-`HKLM\SOFTWARE\Policies\Google\Chrome\CloudManagementEnrollmentToken` (Edge has an
-equivalent under `…\Policies\Microsoft\Edge`). After that, re-run the installer's
-force-install. (Faking Windows MDM/domain state in the registry also works but is
-invasive and not recommended.) If you'd rather not, just use **load-unpacked** — it
-does the same job with a dismissable startup bubble.
-
-With **1Password 4** no `allowed_origins` / native-messaging step is needed — on Windows the
-extension connects over `ws://127.0.0.1`, which authenticates by pairing secret, not by
-extension ID. With **1Password 7**, use load-unpacked instead: 1Password 7 connects only by
-native messaging, and its host admits only the extension IDs it lists, which include the
-unpacked ID (`phicbbndgmmpogmijjkbmdhpioaieaha`) but not the force-install ID
-(`mmfoigkanhpccidpokhjnomdcmgmjomj`).
-
 **Uninstall:** menu option 3, or run [`uninstall.ps1`](uninstall.ps1).
-
-**Rebuild after changing `src/`:** run `build\pack.ps1` (needs Chrome + Node). It
-re-signs the crx (its manifest gets `update_url`) and refreshes `dist/1password-reborn.crx` + `dist/extension.json`;
-commit those and the one-command install picks them up.
 
 > Forking: change `$Owner` / `$Repo` / `$Branch` at the top of `install.ps1` and the
 > `irm` URL above to point at your own repo.
@@ -283,47 +245,44 @@ extension does all the WebAuthn work and uses the app only as storage.
 When a site asks for a passkey, a card appears in the middle of the page, over a
 dimmed page:
 
-- **Create:** "Save this passkey in 1Password?" with an editable title (default
-  `[Passkey] <site> - <name>`; the prefix keeps passkey items easy to find and to
-  exclude from a Bitwarden 1PIF import). *Save in 1Password* generates the key in the service
-  worker and sends a new Login to the app through the normal save path. Confirm the
-  app's save dialog: keep **Create new Login** and click **Save**, then click **Done**
-  on the card; only then does the site receive the credential. Never pick an existing
-  login in that dialog: the app then replaces that item's passkey with the new one and
-  moves the old passkey into the item's password history, so the old account can no
-  longer sign in with it. The item holds a `username` field and a concealed `passkey`
-  field. The 1Password 4 app treats that field as the item's **password**: it shows it
-  as Password (also in 1Password 7 on the iPhone) and keeps replaced values in password
-  history. Do not copy that password or let another 1Password client fill it; it is the
-  passkey's private key. This extension never types it into a page.
-- **With 1Password 7** its save window needs two things from you. It preselects **Update
-  existing** whenever the site already has a login: choose **Create New** instead, and check
-  that it is still selected when you click Save (1Password 7 can switch back to Update existing
-  while the window is open). The card reminds you while that window is open. And it chooses
-  the title itself: 1Password 7.9 names the item after the site (for example `Webauthn`), and
-  1Password 7.3 proposes `[Passkey] <name>` (shortened to the site's name if the title
-  contains it). Type the title and any tags you want in its window before you save: the card
-  shows the proposed title, with buttons to edit and copy it, so you can paste it there.
-- **Sign in:** pick the item in the 1Password popup, then click **Sign in** on the card.
-  That second click is required: the app's reply carries no request token, so the
-  click is what ties the chosen item to the requesting page. On 1Password 4.6.1 the app
-  answers with its normal fill: while a sign-in waits, the extension adds a hidden
-  `passkey` field to the page details it reports, takes the passkey out of the app's
-  fill script and removes it from every fill, so a passkey is never typed into a page.
-- **Use another way** is on every card except the one shown while a new passkey is
-  being saved (Done / Cancel only). It hands the request to the browser's own
-  passkey dialog (Windows Hello, security key, phone).
+- **Create:** "Save this passkey in 1Password?" with an editable title. *Save in
+  1Password* then asks you to **pick the login to add this passkey to** in the 1Password
+  popup: pick the site's existing login, and Reborn copies its username and password into
+  **one new item** together with the passkey. If the login's username differs from the
+  passkey's account, a card asks first (*Use this login*, *Pick again*, *New login
+  instead*). *New login instead* saves the passkey in a new item of its own. In 1Password
+  7's save window choose **Create New** (it preselects Update existing, which would not
+  save the passkey and would replace the selected login's username and password), type the
+  title you want (the card shows the proposed one, with edit and copy buttons), save, and
+  click **Done** on the card; only then does the site receive the credential. Your old
+  login stays: move anything else you need from it, such as notes or one-time codes, then
+  delete it.
+- **The switch:** the toolbar icon's right-click menu **1Password passkeys → Add new
+  passkeys to an existing login** (on by default). Turned off, every passkey goes into a
+  new item of its own.
+- **Where 1Password 7 puts it:** the passkey is a **text** field `passkey` under **Saved on
+  <site>** in the login. 1Password 7 shows it **in clear text** when you open the login: it is
+  the passkey's private key, so do not copy it or show it on a shared screen. It stays as
+  encrypted in the vault as the password next to it. A later password change that 1Password 7
+  saves with **Update existing** replaces only the password; the passkey stays.
+- **Sign in:** pick the login in the 1Password popup, then click **Sign in** on the card.
+  A login that holds both fills its password on normal sign-in pages, and its passkey when
+  a site asks for a passkey. Passkey items saved by earlier Reborn versions keep working.
+- **Use another way** is on every card except the one shown while a new passkey is being saved
+  (Done / Cancel only). It hands the request to the browser's own passkey dialog.
 
-**Where the key lives.** Inside the item's encrypted details, exactly as protected as
-the password next to it (OPVault encryption, ciphertext on Dropbox, the encrypted
-channel to the app). The field's JSON follows Bitwarden's `fido2Credentials` schema;
+**Where the key lives.** Inside the item's encrypted details, exactly as protected as the
+password next to it (OPVault encryption, ciphertext on Dropbox, the encrypted channel to
+the app). The field's JSON follows Bitwarden's `fido2Credentials` schema;
 `tools/1pif-to-bitwarden.js` turns a 1Password 4 export (classic 1PIF, or the
 OPVault-style JSON that 1Password 4.6 for Windows writes under File → Export) into a
-Bitwarden JSON import that restores working passkeys (items in the trash are skipped;
-the tool refuses to write over its input file). Do not run passkey items through
-Bitwarden's own 1PIF importer (search for `[Passkey]` in 1Password 4 to find them): it
-would copy the private key into a visible Bitwarden password. Editing the concealed field by hand breaks the passkey; Dropbox's file
-history is the undo.
+Bitwarden JSON import that restores working passkeys (items in the trash are skipped; the
+tool refuses to write over its input file). It reads both kinds of items: the passkey
+field of earlier versions and this edition's "Saved on <site>" text field, and it carries
+a combined login's own password. Do not run passkey items through Bitwarden's own 1PIF
+importer (search for the tag `passkey` to find them): it would copy the private key into a
+visible Bitwarden password or field. Editing the passkey field by hand breaks the passkey;
+Dropbox's file history is the undo.
 
 **Limitations.**
 - Chromium 111+ or Firefox 140+ (verified in Firefox 158 in the 1.5.0 gates); top-level frames; modal requests only. Sites that use the browser's
@@ -340,11 +299,14 @@ history is the undo.
   shows no popup, click the 1Password toolbar button and pick the item there.
 - The card lives in the page's DOM. Its buttons ignore scripted clicks and clicks in
   the first 500 ms, but a page on the same site could still hide or cover it.
-- If you cancel the app's save dialog, re-send the item from the toolbar icon's
-  right-click menu **1Password passkeys → Re-save …** (kept until the browser closes, or the extension is updated, reloaded or disabled). With 1Password 7, choose **Create New** in its window; no card is shown for a re-save.
-- Passkeys are unusable from 1Password 7 on the iPhone, which shows the passkey as the
-  item's password (see above); register a second passkey there in iCloud Keychain.
-  Sites accept several passkeys per account.
+- If you cancel 1Password 7's save window, or chose Update existing there, re-send the
+  passkey from the toolbar icon's right-click menu **1Password passkeys → Re-save …**
+  (kept until the browser closes, or the extension is updated, reloaded or disabled) and
+  choose **Create New**. Re-save cannot undo what Update existing wrote into the login you
+  selected.
+- Passkeys are unusable from 1Password 7 on the iPhone (no passkey support there); it
+  shows the passkey as text in the login. Register a second passkey there in iCloud
+  Keychain if you need one.
 
 ## Layout
 
@@ -362,14 +324,14 @@ src/                    the loadable / packable MV3 extension
   ext/sjcl.js           crypto library, unmodified
   fillStyle.css         content-script styles, unmodified
   assets/               icons
-build/                  pack.ps1 + compute-id.js (crx), pack-firefox.js (XPIs); key.pem gitignored
+build/                  pack-firefox.js (the 1Password 7 XPI); pack.ps1 + compute-id.js build the main version's crx; key.pem gitignored
 tools/                  1pif-to-bitwarden.js (migrate passkeys to Bitwarden)
 tests/                  node --test suites: passkey modules, background shims, Firefox packer, installer, release metadata
-dist/                   committed install artifacts: signed crx + extension.json + updates.xml; firefox/ (two XPIs + updates.json)
+dist/                   committed install artifacts: firefox/ (the 1Password 7 XPI + updates.json)
 original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)
 seed-op4.ps1            first-run fix: set VerifyCodeSignature=0 (accept modern browsers)
-uninstall.ps1           remove the force-install policy
+uninstall.ps1           remove a force-install policy left by the main version
 LICENSE / NOTICE        MIT (original work) + third-party notices
 CHANGELOG.md            release history
 ```
@@ -409,9 +371,10 @@ Edition with 1Password 7.3.657 and 7.9.834.
   it can leave a confusing "no passkey" notice.
 - **`chrome.storage.session` holds unsaved passkeys only until the browser closes, or the extension is updated, reloaded or disabled** (Chrome clears it then).
   Click Done only after the app really saved the item.
-- **The 1Password 4 app stores the passkey as the item's password.** Copying it, or
-  letting another 1Password client fill it, exposes the private key. Treat passkey
-  items' passwords as untouchable; migrate them with tools/1pif-to-bitwarden.js.
+- **Passkey items saved by earlier versions hold the passkey as the item's password,
+  and 1Password 7 shows this edition's passkey field in clear text.** Copying either, or
+  letting another 1Password client fill it, exposes the private key. Treat them as
+  untouchable; migrate them with tools/1pif-to-bitwarden.js.
 - **Do not use passkey items with the unmodified MV2 extension.** The MV2 extension this
   README offers for Vivaldi (above) has no passkey strip, so filling a passkey item there
   would type the passkey JSON, including the private key, into a real password field
