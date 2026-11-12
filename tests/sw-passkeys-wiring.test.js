@@ -20,14 +20,25 @@ async function until(pred, label) {
   throw new Error('timed out waiting for ' + label);
 }
 
-function boot(local) {
+function boot(local, opts = {}) {
   const logs = [];
   const rec = (level) => (...a) => logs.push({ level, text: a.map(String).join(' ') });
   const calls = { autosave: [], executed: [], collected: [], popup: 0, menus: [] };
   const store = { local: copy(local || {}), session: {} };
+  // opts.asyncLocal: local.get answers later with a snapshot taken at call time (like chrome.storage);
+  // opts.localError: local.get/set callbacks run with chrome.runtime.lastError set.
   const area = (name) => ({
-    get: (k, cb) => cb({ [k]: store[name][k] }),
-    set: (o, cb) => { Object.assign(store[name], copy(o)); if (cb) cb(); },
+    get: (k, cb) => {
+      const snap = copy({ [k]: store[name][k] });
+      const run = () => { if (name === 'local' && opts.localError) chrome.runtime.lastError = { message: 'boom-read' }; try { cb(opts.localError && name === 'local' ? {} : snap); } finally { chrome.runtime.lastError = undefined; } };
+      if (name === 'local' && opts.asyncLocal) setTimeout(run, 5); else run();
+    },
+    set: (o, cb) => {
+      Object.assign(store[name], copy(o));
+      if (!cb) return;
+      if (name === 'local' && opts.localError) chrome.runtime.lastError = { message: 'boom-write' };
+      try { cb(); } finally { chrome.runtime.lastError = undefined; }
+    },
   });
   const chrome = {
     runtime: { lastError: undefined, onConnect: listener() },
@@ -229,5 +240,53 @@ test('entries of different documents are never combined', async () => {
     { documentUUID: 'd2', script: [{ action: 'fill', values: ['__op4pw', 'pw2'] }] }] });
   await until(() => env.calls.autosave.length === 1, 'save from d2 alone');
   assert.deepEqual(env.calls.autosave[0][0].collectedDocument.fields.slice(0, 2).map((f) => f.value), ['alice@example.com', 'pw2']);
+  noErrors(env);
+});
+
+/* ---------- fix round 1: I1 (promotion mid-fill), I2 (click before the settings read), I3 (storage errors) ---------- */
+
+test('I1: a create promoted while a fill is processed takes no entry of the previous pick', async () => {
+  const env = boot();
+  await ticks(5);
+  const a = connect(env), b = connect(env);
+  const other = { ...CREATE, user: { id: 'BQYH', name: 'alice@example.com', displayName: 'Alice' } };
+  await a.send({ type: 'request', id: 'A', kind: 'create', options: CREATE });
+  await a.send({ type: 'approve', id: 'A', stage: 'prompt', title: '' });
+  await b.send({ type: 'request', id: 'B', kind: 'create', options: other });
+  await b.send({ type: 'approve', id: 'B', stage: 'prompt', title: '' });
+  env.sandbox.Agent.Fa({ pageDetails: [
+    { documentUUID: 'd1', url: 'https://webauthn.io/', fields: [] },
+    { documentUUID: 'd2', url: 'https://webauthn.io/frame', fields: [] }] });
+  const entry = (id) => ({ documentUUID: id, script: [
+    { action: 'fill', values: ['__op4us', 'alice@example.com'] }, { action: 'fill', values: ['__op4pw', 'picked-for-A'] }] });
+  env.sandbox.AgentHandlers.executeFillScript({ scripts: [entry('d1'), entry('d2')] });
+  await until(() => env.calls.autosave.length >= 1, 'the first save');
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(env.calls.autosave.length, 1);
+  assert.equal(b.card().state, 'pick-login');
+  noErrors(env);
+});
+
+test('I2: a switch click that beats the settings read wins', async () => {
+  const env = boot({ 'op4pk.settings': { addToExisting: true } }, { asyncLocal: true });
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-add-existing', checked: false });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(env.store.local['op4pk.settings'], { addToExisting: false });
+  assert.equal(env.calls.menus.find((m) => m.id === 'op4pk-add-existing').checked, false);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => env.calls.autosave.length === 1, 'passkey-only save');
+  assert.equal(env.calls.popup, 0);
+  noErrors(env);
+});
+
+test('I3: settings storage errors are logged once each; an unreadable value counts as on', async () => {
+  const env = boot({ 'op4pk.settings': { addToExisting: false } }, { localError: true });
+  await ticks(10);
+  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-read')).length, 1);
+  assert.equal(env.calls.menus.find((m) => m.id === 'op4pk-add-existing').checked, true);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-add-existing', checked: false });
+  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-write')).length, 1);
   noErrors(env);
 });

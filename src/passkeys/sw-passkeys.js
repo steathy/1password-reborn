@@ -64,16 +64,20 @@
     }));
   /* ---------- settings: chrome.storage.local['op4pk.settings'] = { addToExisting } (default on) ---------- */
   let settings = { addToExisting: true };
+  let settingsTouched = false;                        // a switch click that beat the read wins over the stored value
   const settingsReady = new Promise((resolve) =>
     chrome.storage.local.get('op4pk.settings', (r) => {
-      void chrome.runtime.lastError;                  // an unreadable value counts as on
+      if (chrome.runtime.lastError) console.warn(TAG, 'settings unreadable, the switch counts as on:', chrome.runtime.lastError.message || chrome.runtime.lastError);
       const s = r && r['op4pk.settings'];
-      if (s && typeof s.addToExisting === 'boolean') settings = { addToExisting: s.addToExisting };
+      if (!settingsTouched && s && typeof s.addToExisting === 'boolean') settings = { addToExisting: s.addToExisting };
       resolve();
     }));
   function setAddToExisting(on) {
+    settingsTouched = true;
     settings = { addToExisting: on === true };
-    chrome.storage.local.set({ 'op4pk.settings': settings }, () => void chrome.runtime.lastError);
+    chrome.storage.local.set({ 'op4pk.settings': settings }, () => {
+      if (chrome.runtime.lastError) console.warn(TAG, 'settings not saved, the choice is lost on restart:', chrome.runtime.lastError.message || chrome.runtime.lastError);
+    });
   }
   // Requests are handled only once the persisted index, the switch and the focused tab are known, so
   // the first request after a worker start honours persisted exclusions and positive matches
@@ -218,7 +222,7 @@
             if (!e.documentUUID || !captureDocs.ids.has(e.documentUUID)) continue;   // not one of this pick's documents
             if (!manager.handleCapture({ username: e.markers[FS.USERNAME_MARKER_OPID], password: e.markers[FS.PASSWORD_MARKER_OPID], passkeys: e.values })) break;
             const after = manager.getState().owner;
-            if (!after || after.stage !== 'pick-login') break;      // taken, or a mismatch to confirm: later entries are not read
+            if (!after || after.stage !== 'pick-login' || after.pick !== owner.pick) break;      // taken (a busy create may now own a NEW pick), or a mismatch to confirm: later entries are not read
           }
         }
         FS.emptyScripts(payload);                  // nothing is typed while picking; the original still reports fillItemResults
