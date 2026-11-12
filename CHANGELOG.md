@@ -12,7 +12,7 @@ one for 1Password 4 and 7 with one item per passkey.
 
 ### Added
 - **Passkey and password in one login.** New passkeys are saved as a text field that 1Password 7
-  keeps under "Saved on <site>"; a later password update keeps the passkey.
+  keeps under "Saved on &lt;site&gt;"; a later password update keeps the passkey.
 - **Add a passkey to an existing login:** after *Save in 1Password*, pick the site's login in the
   1Password popup; its username and password go into one new item with the passkey. A card asks
   first when the login's username differs from the passkey's account.
@@ -21,7 +21,7 @@ one for 1Password 4 and 7 with one item per passkey.
 ### Changed
 - Passkey sign-in reports a hidden password field and a hidden text field `passkey`, so a login's
   own password no longer hides its passkey; older passkey items keep working.
-- `tools/1pif-to-bitwarden.js` reads the "Saved on <site>" passkey and keeps a combined login's
+- `tools/1pif-to-bitwarden.js` reads the "Saved on &lt;site&gt;" passkey and keeps a combined login's
   password.
 - Firefox: only the unsigned 1Password 7 build, updating from this branch.
 

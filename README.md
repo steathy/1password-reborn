@@ -238,7 +238,7 @@ you get a tidy "Connected" tab instead of a DNS error.
 ## Passkeys
 
 Since port **1.4.0** the extension can create and use **passkeys** (WebAuthn) and store
-them in your 1Password 4 vault. The desktop app knows nothing about passkeys; the
+them in your 1Password vault. The desktop app knows nothing about passkeys; the
 extension does all the WebAuthn work and uses the app only as storage.
 
 **How it works.** A page-world script takes over `navigator.credentials.create/get`.
@@ -261,7 +261,7 @@ dimmed page:
   passkeys to an existing login** (on by default). Turned off, every passkey goes into a
   new item of its own.
 - **Where 1Password 7 puts it:** the passkey is a **text** field `passkey` under **Saved on
-  <site>** in the login. 1Password 7 shows it **in clear text** when you open the login: it is
+  &lt;site&gt;** in the login. 1Password 7 shows it **in clear text** when you open the login: it is
   the passkey's private key, so do not copy it or show it on a shared screen. It stays as
   encrypted in the vault as the password next to it. A later password change that 1Password 7
   saves with **Update existing** replaces only the password; the passkey stays.
@@ -278,7 +278,7 @@ the app). The field's JSON follows Bitwarden's `fido2Credentials` schema;
 OPVault-style JSON that 1Password 4.6 for Windows writes under File → Export) into a
 Bitwarden JSON import that restores working passkeys (items in the trash are skipped; the
 tool refuses to write over its input file). It reads both kinds of items: the passkey
-field of earlier versions and this edition's "Saved on <site>" text field, and it carries
+field of earlier versions and this edition's "Saved on &lt;site&gt;" text field, and it carries
 a combined login's own password. Do not run passkey items through Bitwarden's own 1PIF
 importer (search for the tag `passkey` to find them): it would copy the private key into a
 visible Bitwarden password or field. Editing the passkey field by hand breaks the passkey;
