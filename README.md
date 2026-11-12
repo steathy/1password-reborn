@@ -356,6 +356,7 @@ Passkeys (1.4.0): create and sign-in verified on webauthn.io against 1Password 4
 Firefox (1.5.0): fill, save and passkeys verified in Firefox 158 and 159 against 1Password 4.6.1
 with the signed build; the 1Password 7 build verified on the VM in Firefox ESR / Developer
 Edition with 1Password 7.3.657 and 7.9.834.
+1Password 7 edition (1.6.0-1p7): verified on the VM with 1Password 7.9.834 in Chrome and Firefox ESR (gates G1–G6).
 
 ## Known risks
 
@@ -387,7 +388,7 @@ Edition with 1Password 7.3.657 and 7.9.834.
 
 ## Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.5.0**.
+See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.6.0-1p7**.
 
 ## License
 

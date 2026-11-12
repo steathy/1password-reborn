@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
-## [1.6.0-1p7] - unreleased
+## [1.6.0-1p7] - 2026-11-12
 
 1Password 7 edition, branch `1pass7` (1Password 7 for Windows only). The main version stays the
 one for 1Password 4 and 7 with one item per passkey.

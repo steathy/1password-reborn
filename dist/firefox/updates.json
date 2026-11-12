@@ -3,7 +3,7 @@
     "onepassword4@agilebits.com": {
       "updates": [
         {
-          "version": "4.7.5.93",
+          "version": "4.7.5.94",
           "update_link": "https://raw.githubusercontent.com/steathy/1password-reborn/1pass7/dist/firefox/1password-reborn-firefox-1p7.xpi"
         }
       ]
