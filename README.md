@@ -261,14 +261,29 @@ dimmed page:
   new item of its own.
 - **Where 1Password 7 puts it:** the passkey is a **text** field `passkey` under **Saved on
   &lt;site&gt;** in the login. 1Password 7 shows it **in clear text** when you open the login: it is
-  the passkey's private key, so do not copy it or show it on a shared screen. It stays as
-  encrypted in the vault as the password next to it. A later password change that 1Password 7
-  saves with **Update existing** replaces only the password; the passkey stays.
+  the passkey's private key, so do not copy it anywhere else or show it on a shared screen. It
+  stays as encrypted in the vault as the password next to it. A later password change that
+  1Password 7 saves with **Update existing** replaces only the password; the passkey stays.
 - **Sign in:** pick the login in the 1Password popup, then click **Sign in** on the card.
   A login that holds both fills its password on normal sign-in pages, and its passkey when
   a site asks for a passkey. Passkey items saved by earlier Reborn versions keep working.
 - **Use another way** is on every card except the one shown while a new passkey is being saved
   (Done / Cancel only). It hands the request to the browser's own passkey dialog.
+
+**Add a passkey to a login you already have, by hand.** The pick step above copies your login
+into a new item. To keep the login itself, with its notes, one-time codes and history:
+
+1. Save the passkey on its own: turn the switch off (or choose *New login instead*), register,
+   choose **Create New** in 1Password 7's window and click **Done**.
+2. In 1Password 7, open the new item and click the copy button of its `passkey` field.
+3. Open your existing login, click **Edit**, add a section named `Passkey` (1Password 7 shows
+   it as PASSKEY), add a field of type **Text** labelled exactly `passkey`, paste, and save.
+4. Delete the new item. If Windows clipboard history (Win+V) is on, delete the copied entry too:
+   it is the passkey's private key.
+
+The field must be **Text**: a login that has its own password never hands a Password-type field
+to Reborn. A damaged paste breaks the passkey. Tested with 1Password 7.9.834: sign-in, ordinary
+password fills and later password updates all work as with a combined login.
 
 **Where the key lives.** Inside the item's encrypted details, exactly as protected as the
 password next to it (OPVault encryption, ciphertext on Dropbox, the encrypted channel to
