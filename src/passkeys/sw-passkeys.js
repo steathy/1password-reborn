@@ -139,6 +139,7 @@
     isNativeApp: () => typeof self.NativeMessagingConnection === 'function' && Agent.c instanceof self.NativeMessagingConnection,
     getActive,
     getSettings: () => settings,
+    isPasskeyValue: FS.isPasskeyValue,
     log: (level, ...args) => (level === 'error' ? console.error : console.warn)(TAG, ...args),
   });
 
@@ -169,14 +170,15 @@
     });
   });
 
-  // Some app versions send the item itself (fillItem); 1Password 4.6.1 for Windows fills through
-  // collectDocuments/executeFillScript instead (hooks below). The passkey field is stripped
-  // before the engine's own handler runs, whether or not we consume the reply.
+  // Some app versions send the item itself (fillItem); 1Password 4.6.1 and 7.9.834 for Windows fill
+  // through collectDocuments/executeFillScript instead (hooks below). Every passkey is stripped
+  // before the engine's own handler runs, whether or not we consume the reply; if the hook throws,
+  // nothing is filled (fail closed, like the fill-script hook).
   const origFillItem = AH.fillItem;
   AH.fillItem = function (payload) {
-    let consumed = false;
+    let consumed;
     try { consumed = manager.handleFillItem(payload); }
-    catch (e) { console.error(TAG, 'fillItem hook failed', e); }
+    catch (e) { console.error(TAG, 'fillItem hook failed', e); return; }
     if (!consumed) return origFillItem.call(this, payload);
   };
 

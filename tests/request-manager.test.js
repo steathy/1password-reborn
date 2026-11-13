@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const A = require(path.join(__dirname, '..', 'src', 'passkeys', 'authenticator.js'));
 const { createManager } = require(path.join(__dirname, '..', 'src', 'passkeys', 'request-manager.js'));
+const FS = require(path.join(__dirname, '..', 'src', 'passkeys', 'fill-script.js'));
 
 const ORIGIN = 'https://login.example.com';
 const PAGE = ORIGIN + '/login';
@@ -56,6 +57,7 @@ function harness(opts = {}) {
     isConnected: () => connected,
     isNativeApp: () => opts.nativeApp === true,
     getSettings: () => ({ addToExisting: opts.addToExisting === true }),
+    isPasskeyValue: FS.isPasskeyValue,
     getActive: () => active,
     setTimeout: (fn, ms) => { const h = { fn, ms, cleared: false }; timers.push(h); return h; },
     clearTimeout: (h) => { if (h) h.cleared = true; },
@@ -366,6 +368,48 @@ test('fillItem: other site or disallowed id keeps waiting; an inactive owner tab
   h.setActive({ tabId: 1, windowId: 10 });
   assert.equal(h.m.handleFillItem({ item: corrupt }), true);
   await until(() => p.last('card').card.text === 'That passkey could not be read.', 'unreadable notice');
+});
+
+test('fillItem: a passkey kept as a text field in a section (1Password 7 edition) is stripped and signs in', async () => {
+  const v = await vaultItem();
+  const pk = v.item.secureContents.fields[1].value;
+  const combined = () => ({ uuid: 'item-2', secureContents: {
+    fields: [
+      { name: 'username', value: 'alice@example.com', type: 'T', designation: 'username' },
+      { name: 'password', value: 'site-pw', type: 'P', designation: 'password' },
+    ],
+    sections: [{ name: 'Section_1', title: 'Saved on example.com', fields: [{ k: 'string', n: 'passkey', t: 'passkey', v: pk }] }],
+  } });
+  const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  const loose = combined();
+  assert.equal(h.m.handleFillItem({ item: loose }), false);                    // no owner: the engine fills the login
+  assert.deepEqual(loose.secureContents.fields.map((f) => f.value), ['alice@example.com', 'site-pw']);
+  assert.deepEqual(loose.secureContents.sections[0].fields, []);               // the passkey never reaches the engine
+  await until(() => (h.indexData['example.com'] || []).some((e) => e.itemUuid === 'item-2'), 'index refresh');
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'waiting');
+  assert.equal(h.m.handleFillItem({ item: combined() }), true);
+  await until(() => p.state() === 'confirm', 'confirm card');
+});
+
+test('fillItem: any field holding passkey JSON is stripped, whatever its name or section', async () => {
+  const v = await vaultItem();
+  const pk = v.item.secureContents.fields[1].value;
+  const item = { uuid: 'item-3', secureContents: {
+    fields: [
+      { name: 'username', value: 'alice@example.com', type: 'T', designation: 'username' },
+      { name: 'password', value: pk, type: 'P', designation: 'password' },     // a passkey that became the password (Update existing on a 1.5.0 save)
+    ],
+    sections: [
+      { name: 'Section_a', title: 'Passkey', fields: [{ k: 'string', n: 'a1b2', t: 'passkey', v: pk }] },   // added by hand in the editor
+      { name: 'Section_b', title: 'Other', fields: [{ k: 'string', n: 'pin', t: 'PIN', v: '1234' }] },
+    ],
+  } };
+  const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  assert.equal(h.m.handleFillItem({ item }), false);
+  assert.equal(JSON.stringify(item).includes(v.made.credentialId), false);
+  assert.deepEqual(item.secureContents.fields.map((f) => f.name), ['username']);
+  assert.deepEqual(item.secureContents.sections.map((s) => s.fields.map((f) => f.t)), [[], ['PIN']]);
 });
 
 test('R2-1: a late reply after an abort only moves the new owner to confirm; signing needs a fresh Sign in', async () => {

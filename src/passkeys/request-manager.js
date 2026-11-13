@@ -24,6 +24,7 @@
     const isNativeApp = deps.isNativeApp || (() => false);
     const getActive = deps.getActive;
     const log = deps.log || function () {};
+    const isPasskeyValue = deps.isPasskeyValue || (() => false);   // fill-script.js's check, injected (this module stays pure)
     const setT = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
     const clearT = deps.clearTimeout || ((h) => clearTimeout(h));
     const now = deps.now || (() => Date.now());
@@ -334,16 +335,38 @@
     // Synchronous decision for the wrapper; the async part never changes it.
     function handleFillItem(payload) {
       const item = payload && payload.item;
-      const fields = item && item.secureContents && Array.isArray(item.secureContents.fields) ? item.secureContents.fields : null;
-      const idx = fields ? fields.findIndex((f) => f && f.name === 'passkey' && f.type === 'P') : -1;
-      if (idx < 0) {
+      const found = stripPasskeys(item && item.secureContents);           // ALWAYS strip before the engine sees the item
+      if (!found.length) {
         if (owner && owner.stage === 'waiting') card(owner, 'notice', { text: 'That item has no passkey. Pick another.' });
         return false;                                                   // the engine fills as usual
       }
-      const field = fields.splice(idx, 1)[0];                             // ALWAYS strip before the engine sees the item
       const live = owner && (owner.stage === 'waiting' || owner.stage === 'confirm') ? owner : null;
-      processPasskeyField(field.value, item.uuid, live).catch((e) => log('error', 'passkey field processing failed', e));
+      processPasskeyField(found[0], item.uuid, live).catch((e) => log('error', 'passkey field processing failed', e));
       return Boolean(live);                                               // consumed only while a live owner exists
+    }
+    // Removes every passkey from an item in place and returns the removed values, top-level fields
+    // first: the concealed field `passkey` of earlier items, and any field or section field whose
+    // value is passkey JSON (the 1Password 7 edition keeps the passkey as a text field in a section,
+    // and Update existing can turn a passkey into the login's password).
+    function stripPasskeys(sc) {
+      const out = [];
+      if (!sc || typeof sc !== 'object') return out;
+      if (Array.isArray(sc.fields)) {
+        takeFrom(sc.fields, (f) => (f.name === 'passkey' && f.type === 'P') || isPasskeyValue(f.value), (f) => f.value, out);
+      }
+      if (Array.isArray(sc.sections)) {
+        for (const s of sc.sections) if (s && Array.isArray(s.fields)) takeFrom(s.fields, (f) => isPasskeyValue(f.v), (f) => f.v, out);
+      }
+      return out;
+    }
+    function takeFrom(list, isPasskey, valueOf, out) {
+      let w = 0;
+      for (let i = 0; i < list.length; i++) {
+        const f = list[i];
+        if (f && typeof f === 'object' && isPasskey(f)) out.push(valueOf(f));
+        else list[w++] = f;
+      }
+      list.length = w;
     }
     async function processPasskeyField(value, itemUuid, rec) {
       let passkey = null;

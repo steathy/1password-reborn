@@ -23,7 +23,7 @@ async function until(pred, label) {
 function boot(local, opts = {}) {
   const logs = [];
   const rec = (level) => (...a) => logs.push({ level, text: a.map(String).join(' ') });
-  const calls = { autosave: [], executed: [], collected: [], popup: 0, menus: [] };
+  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [] };
   const store = { local: copy(local || {}), session: {} };
   // opts.asyncLocal: local.get answers later with a snapshot taken at call time (like chrome.storage);
   // opts.localError: local.get/set callbacks run with chrome.runtime.lastError set.
@@ -60,7 +60,8 @@ function boot(local, opts = {}) {
     NativeMessagingConnection,
     OnePassword: { showPopup: () => { calls.popup++; }, autosave: (...a) => calls.autosave.push(copy(a)) },
     Agent: { Fa: (c) => { calls.collected.push(copy(c)); return c; }, isConnected: () => true, c: new NativeMessagingConnection() },
-    AgentHandlers: { fillItem: () => {}, executeFillScript: (p) => calls.executed.push(copy(p)) },
+    AgentHandlers: { fillItem: (p) => { let c; try { c = copy(p); } catch (e) { c = { uncopyable: true }; } calls.filled.push(c); },
+      executeFillScript: (p) => calls.executed.push(copy(p)) },
   };
   sandbox.self = sandbox;
   vm.createContext(sandbox);
@@ -289,4 +290,20 @@ test('I3: settings storage errors are logged once each; an unreadable value coun
   env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-add-existing', checked: false });
   assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-write')).length, 1);
   noErrors(env);
+});
+
+test('fillItem hook: the engine never receives a passkey kept in a section; a hook failure fills nothing', async () => {
+  const env = boot();
+  await ticks(5);
+  const dummy = JSON.stringify({ v: 1, credentialId: 'lab', lab: true });
+  env.sandbox.AgentHandlers.fillItem({ item: { uuid: 'i1', secureContents: {
+    fields: [{ name: 'username', value: 'alice', type: 'T', designation: 'username' }, { name: 'password', value: 'hunter2', type: 'P', designation: 'password' }],
+    sections: [{ name: 's1', title: 'Saved on webauthn.io', fields: [{ k: 'string', n: 'passkey', t: 'passkey', v: dummy }] }] } } });
+  await ticks(10);
+  assert.equal(env.calls.filled.length, 1);
+  assert.equal(JSON.stringify(env.calls.filled[0]).includes('credentialId'), false);
+  assert.deepEqual(env.calls.filled[0].item.secureContents.fields.map((f) => f.value), ['alice', 'hunter2']);
+  env.sandbox.AgentHandlers.fillItem({ get item() { throw new Error('boom'); } });
+  assert.equal(env.calls.filled.length, 1);                                    // fail closed: nothing filled
+  assert.ok(env.logs.some((l) => l.level === 'error' && l.text.includes('fillItem hook failed')));
 });
