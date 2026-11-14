@@ -32,6 +32,9 @@
     let pickSeq = 0;             // numbers every start of a pick (getState().owner.pick)
 
     const keyOf = (port, id) => port.id + ':' + id;
+    // A record is live while it is the one registered under its key. The id in the key comes from
+    // the page, which can send it again: a record that has ended must never act for its successor.
+    const isLive = (rec) => pending.get(rec.key) === rec;
     const normId = (b64) => A.b64url.encode(A.b64url.decode(b64));
     const idOfEntry = (e) => A.b64url.encode(A.bytesFromUuid(e.credentialId));
 
@@ -44,13 +47,14 @@
     }
     // Retire ONE request. Only when it is the popup owner does the owner slot change.
     function retire(rec) {
-      if (!pending.has(rec.key)) return;
+      if (!isLive(rec)) return;
       clearT(rec.timer);
       pending.delete(rec.key);
       card(rec, 'none');
       if (owner === rec) { owner = null; promote(); }
     }
     function reply(rec, payload) {
+      if (!isLive(rec)) return;                          // it has ended: nothing more goes to the page under its id
       send(rec.port, Object.assign({ type: 'reply', id: rec.id }, payload));
       retire(rec);
     }
@@ -143,7 +147,7 @@
       openPick(rec);
     }
     function openPick(rec) {
-      if (owner && owner !== rec) { rec.stage = 'busy'; return card(rec, 'busy'); }
+      if ((owner && owner !== rec) || !isActiveTab(rec)) { rec.stage = 'busy'; return card(rec, 'busy'); }
       if (!isConnected()) { rec.stage = 'start'; return card(rec, 'not-connected'); }
       owner = rec;
       rec.pick = ++pickSeq;                              // ties the adapter's capture to this pick
@@ -180,21 +184,26 @@
       let made;
       try { made = await A.makeCredential(rec.options, rec.origin, { uv: true }); }
       catch (e) { return failReq(rec, e.name || 'NotAllowedError', e.message); }
-      if (!pending.has(rec.key)) return;                 // retired while generating
+      if (!isLive(rec)) return;                          // retired while generating
       const payload = buildSavePayload(rec, made, login);
       // The recovery copy is stored BEFORE anything is sent. The adapter's put is asynchronous and
       // rejects on a storage error; neither the app save nor the reply may proceed until it has succeeded.
       try { await recovery.put(made.credentialId, payload); }
       catch (e) {
         log('error', 'recovery store failed', e);
-        if (pending.has(rec.key)) failReq(rec, 'NotAllowedError', 'could not store the passkey');
+        failReq(rec, 'NotAllowedError', 'could not store the passkey');
         return;
       }
       // From here on the copy is kept only if the site gets this passkey.
       const dropCopy = () => recovery.remove(made.credentialId).catch((e) => log('warn', 'recovery remove failed', e));
-      if (!pending.has(rec.key)) { dropCopy(); return; }                   // retired while storing
+      if (!isLive(rec)) { dropCopy(); return; }                            // retired while storing
       if (!isConnected()) { dropCopy(); rec.stage = 'start'; return card(rec, 'not-connected'); }   // the app went away meanwhile
-      autosave(payload.login, payload.collectedDocument, payload.url);
+      try { autosave(payload.login, payload.collectedDocument, payload.url); }
+      catch (e) {                                        // the engine could not send it: the site gets nothing, so no copy is kept
+        log('error', 'save not sent to 1Password', e);
+        dropCopy();
+        return failReq(rec, 'NotAllowedError', 'could not send the save to 1Password');
+      }
       // The app sends no acknowledgement and this edition does not wait for one: the site gets the
       // passkey now. If the user cancels 1Password's save window, the recovery copy (Re-save) is
       // what is left of it.
@@ -253,17 +262,20 @@
       getOpenPopup(rec);                             // the popup is the prompt
     }
     function getOpenPopup(rec) {
-      if (owner && owner !== rec) { rec.stage = 'busy'; return card(rec, 'busy'); }
+      if ((owner && owner !== rec) || !isActiveTab(rec)) { rec.stage = 'busy'; return card(rec, 'busy'); }
       if (!isConnected()) { rec.stage = 'start'; return card(rec, 'not-connected'); }   // the app went away after intake
       owner = rec;
       rec.stage = 'waiting';
       card(rec, 'waiting');
       showPopup(rec.url);
     }
-    function ownerIsActive() {
+    // Only the active tab of the focused window may use the popup. A request from any other tab
+    // waits as busy (no popup, no pick stage) and promote() opens it once its tab is the active one.
+    function isActiveTab(rec) {
       const a = getActive();
-      return Boolean(a && owner && a.tabId === owner.tabId && a.windowId === owner.windowId);
+      return Boolean(a && a.tabId === rec.tabId && a.windowId === rec.windowId);
     }
+    function ownerIsActive() { return Boolean(owner && isActiveTab(owner)); }
     // Runs when the slot frees AND on every activation/focus event while it is free.
     function promote() {
       if (owner) return;
@@ -343,7 +355,7 @@
       let got;
       try { got = await A.getAssertion(rec.options, rec.origin, rec.passkey, { uv: true }); }
       catch (e) { return failReq(rec, e.name || 'NotAllowedError', e.message); }
-      if (!pending.has(rec.key) || owner !== rec) return;                 // retired meanwhile
+      if (!isLive(rec) || owner !== rec) return;                          // retired meanwhile
       reply(rec, { credential: assertionJson(got) });
     }
     function assertionJson(got) {

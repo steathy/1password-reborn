@@ -41,14 +41,12 @@ function boot(local) {
       onClicked: listener(),
     },
   };
-  function NativeMessagingConnection() {}
   const sandbox = {
     console: { info: rec('info'), warn: rec('warn'), error: rec('error'), log: rec('log') },
     chrome, crypto: globalThis.crypto, TextEncoder, TextDecoder, URL, atob, btoa,
     setTimeout: () => 0, clearTimeout: () => {},
-    NativeMessagingConnection,
     OnePassword: { showPopup: () => { calls.popup++; }, autosave: (...a) => calls.autosave.push(copy(a)) },
-    Agent: { Fa: (c) => { calls.collected.push(copy(c)); return c; }, isConnected: () => true, c: new NativeMessagingConnection() },
+    Agent: { Fa: (c) => { calls.collected.push(copy(c)); return c; }, isConnected: () => true },
     AgentHandlers: { fillItem: (p) => { let c; try { c = copy(p); } catch (e) { c = { uncopyable: true }; } calls.filled.push(c); },
       executeFillScript: (p) => calls.executed.push(copy(p)) },
   };
@@ -58,14 +56,16 @@ function boot(local) {
   return { sandbox, chrome, logs, calls, store };
 }
 
-function connect(env) {
+function connect(env, tabId = 5, origin = 'https://webauthn.io') {
   const posted = [];
   const msg = listener();
+  const gone = listener();
   env.chrome.runtime.onConnect.fns[0]({
-    name: 'op4-passkeys', sender: { tab: { id: 5, windowId: 1, url: 'https://webauthn.io/' }, origin: 'https://webauthn.io' },
-    onMessage: msg, onDisconnect: listener(), postMessage: (m) => posted.push(copy(m)),
+    name: 'op4-passkeys', sender: { tab: { id: tabId, windowId: 1, url: origin + '/' }, origin },
+    onMessage: msg, onDisconnect: gone, postMessage: (m) => posted.push(copy(m)),
   });
-  return { posted, send: async (m) => { msg.fns[0](m); await ticks(20); }, card: () => [...posted].reverse().find((m) => m.type === 'card').card };
+  return { posted, emit: (m) => msg.fns[0](m), send: async (m) => { msg.fns[0](m); await ticks(20); }, disconnect: () => gone.fns[0](),
+    card: () => [...posted].reverse().find((m) => m.type === 'card').card };
 }
 const CREATE = { rp: { id: 'webauthn.io', name: 'webauthn.io' }, user: { id: 'AQID', name: 'alice@example.com', displayName: 'Alice' },
   challenge: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', pubKeyCredParams: [{ type: 'public-key', alg: -7 }] };
@@ -218,6 +218,74 @@ test('I1: a create promoted while a fill is processed takes no entry of the prev
   await new Promise((r) => setTimeout(r, 60));
   assert.equal(env.calls.autosave.length, 1);
   assert.equal(b.card().state, 'pick-login');
+  noErrors(env);
+});
+
+/* ---------- review round 1: a whole sign-in, a background tab, a request id sent again ---------- */
+
+test('save, then sign in with what was saved: one pick each; the fill that shows the passkey ends the menu', async () => {
+  const env = boot();
+  await ticks(5);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+  await until(() => c.posted.some((m) => m.type === 'reply'), 'registration');
+  const passkey = env.calls.autosave[0][0].collectedDocument.fields.find((f) => f.htmlName === 'passkey').value;   // what 1Password keeps and fills back
+  await until(() => env.calls.menus.length === 3, 'Re-save offered');
+  const g = connect(env);
+  await g.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.equal(g.card().state, 'waiting');
+  env.sandbox.Agent.Fa(page());
+  env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [
+    { action: 'fill', values: ['__0', 'alice@example.com'] }, { action: 'fill', values: ['__op4pk', passkey] }] }] });
+  assert.deepEqual(env.calls.executed.at(-1).scripts[0].script, {});           // consumed: nothing is typed
+  await until(() => g.posted.some((m) => m.type === 'reply'), 'assertion');
+  assert.equal(g.posted.find((m) => m.type === 'reply').credential.id, c.posted.find((m) => m.type === 'reply').credential.id);
+  assert.deepEqual(g.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['waiting', 'none']);   // no confirm card
+  await until(() => env.calls.menus.length === 0, 'menu gone');                 // seen in a fill: the copy is not needed any more
+  assert.deepEqual(env.store.session['op4pk.recovery'], {});
+  noErrors(env);
+});
+
+test('a save asked from a background tab waits: no popup, the visible tab fills as usual; switching to it opens the pick', async () => {
+  const env = boot();                                                          // the active tab is 5
+  await ticks(5);
+  const bg = connect(env, 6, 'https://example.com');
+  await bg.send({ type: 'request', id: 'b1', kind: 'create', options: { ...CREATE, rp: { id: 'example.com', name: 'Example' } } });
+  assert.equal(bg.card().state, 'busy');
+  assert.equal(env.calls.popup, 0);
+  env.sandbox.Agent.Fa(page());                                                 // an ordinary fill on tab 5
+  assert.deepEqual(env.calls.collected.at(-1).pageDetails[0].fields.map((f) => f.opid), ['__0']);
+  env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [{ action: 'fill', values: ['__0', 'typed'] }] }] });
+  assert.deepEqual(env.calls.executed.at(-1).scripts[0].script, [{ action: 'fill', values: ['__0', 'typed'] }]);
+  env.chrome.tabs.onActivated.fns[0]({ tabId: 6, windowId: 1 });
+  await ticks(10);
+  assert.equal(bg.card().state, 'pick-login');
+  assert.equal(env.calls.popup, 1);
+  noErrors(env);
+});
+
+test('a request id sent again right behind the New login click never strands the popup: other tabs keep filling and signing in', async () => {
+  const env = boot();
+  await ticks(5);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'X', kind: 'create', options: CREATE });
+  c.emit({ type: 'approve', id: 'X', stage: 'pick-login', choice: 'new' });     // the user's click …
+  c.emit({ type: 'cancel', id: 'X' });                                           // … and the page's own messages in the same turn
+  c.emit({ type: 'request', id: 'X', kind: 'create', options: CREATE });
+  await new Promise((r) => setTimeout(r, 80));
+  await ticks(20);
+  assert.equal(env.calls.autosave.length, 0);                                    // the aborted save is not sent under the newer request's name
+  assert.equal(c.posted.filter((m) => m.type === 'reply').length, 0);
+  c.disconnect();                                                                // the page goes away
+  env.chrome.tabs.onRemoved.fns[0](5);
+  env.chrome.tabs.onActivated.fns[0]({ tabId: 7, windowId: 1 });
+  await ticks(10);
+  env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'x', script: [{ action: 'fill', values: ['__1', 'bank-password'] }] }] });
+  assert.deepEqual(env.calls.executed.at(-1).scripts[0].script, [{ action: 'fill', values: ['__1', 'bank-password'] }]);
+  const other = connect(env, 7, 'https://example.com');
+  await other.send({ type: 'request', id: 'g1', kind: 'get', options: { ...GET, rpId: 'example.com' } });
+  assert.equal(other.card().state, 'waiting');
   noErrors(env);
 });
 

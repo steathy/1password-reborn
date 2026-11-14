@@ -24,7 +24,7 @@ function makePort(id, tab) {
   const port = {
     id, sent: [],
     sender: { origin: ORIGIN, tab: { id: tab.id, windowId: tab.windowId, url: PAGE } },
-    postMessage(m) { port.sent.push(m); },
+    postMessage(m) { port.sent.push(m); if (port.onPost) port.onPost(m); },
     onMessage(cb) { port._onMessage = cb; },
     onDisconnect(cb) { port._onDisconnect = cb; },
     emit(m) { port._onMessage(m); },
@@ -60,7 +60,7 @@ function harness(opts = {}) {
       async remove(id) { calls.recoveryRemove.push(id); },
     },
     showPopup: (url) => calls.showPopup.push(url),
-    autosave: (login, doc, url) => calls.autosave.push({ login, doc, url }),
+    autosave: (login, doc, url) => { if (opts.autosaveThrows) throw new Error('engine autosave failed'); calls.autosave.push({ login, doc, url }); },
     isConnected: () => connected,
     isPasskeyValue: FS.isPasskeyValue,
     getActive: () => active,
@@ -92,6 +92,8 @@ const PICK = { username: 'alice@example.com', password: 'hunter2', passkeys: [] 
 
 test('save: the pick opens at intake; a capture gives one combined save and the credential at once', async () => {
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  let savesAtReply = -1;
+  p.onPost = (m) => { if (m.type === 'reply') savesAtReply = h.calls.autosave.length; };
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
   assert.deepEqual(p.last('card').card, { state: 'pick-login', site: 'Example', name: 'Alice' });
   assert.deepEqual(h.calls.showPopup, [PAGE]);
@@ -100,6 +102,7 @@ test('save: the pick opens at intake; a capture gives one combined save and the 
   assert.equal(h.m.getState().owner, null);                                 // the slot is free again
   await until(() => p.last('reply'), 'reply');
   assert.equal(h.calls.autosave.length, 1);
+  assert.equal(savesAtReply, 1, 'the save is handed to 1Password before the site gets the passkey');
   const { login, doc, url } = h.calls.autosave[0];
   assert.equal(url, PAGE);
   assert.equal(login.type_name, 'webforms.WebForm');
@@ -381,6 +384,38 @@ test('save: the title sent to 1Password 7 leaves the site name out', async () =>
   }
 });
 
+test('save: timeout, a newer request, a disconnect or Cancel while the copy is stored: nothing is sent, the copy is removed', async () => {
+  for (const ending of ['timeout', 'supersede', 'disconnect', 'cancel']) {
+    const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    let release; h.gate.hold = new Promise((r) => { release = r; });
+    p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+    h.m.handleCapture(PICK);
+    await until(() => h.calls.recoveryInFlight === 1, 'recovery write in flight: ' + ending);
+    if (ending === 'timeout') h.timers[0].fn();
+    if (ending === 'supersede') p.emit({ type: 'request', id: 'c2', kind: 'create', options: createOptions() });
+    if (ending === 'disconnect') p.disconnect();
+    if (ending === 'cancel') p.emit({ type: 'decline', id: 'c1', how: 'cancel' });
+    release();
+    await until(() => h.calls.recoveryRemove.length === 1, 'copy removed: ' + ending);
+    await wait(30);
+    assert.deepEqual(h.calls.recoveryRemove, [h.calls.recoveryPut[0][0]], ending);
+    assert.equal(h.calls.autosave.length, 0, ending);
+    assert.equal(p.replies().filter((m) => m.credential).length, 0, ending);
+    assert.equal(h.m.getState().pending.filter((r) => r.id === 'c1').length, 0, ending);
+  }
+});
+
+test('save: a save call that throws ends the request and keeps no copy', async () => {
+  const h = harness({ autosaveThrows: true }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+  h.m.handleCapture(PICK);
+  await until(() => p.last('reply'), 'error reply');
+  assert.equal(p.last('reply').error.name, 'NotAllowedError');
+  assert.equal(p.last('reply').credential, undefined);
+  assert.deepEqual(h.calls.recoveryRemove, [h.calls.recoveryPut[0][0]]);
+  assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
+});
+
 /* ---------- sign-in ---------- */
 
 test('sign-in: the popup opens at intake, whatever was seen before; no approval exists; exits', async () => {
@@ -465,6 +500,16 @@ test('sign-in: a fill while the assertion is signed is consumed and changes noth
   await wait(30);
   assert.equal(p.replies().length, 1);
   assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
+  signGate = new Promise((r) => { release = r; });
+  h = harness({ signGate }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g3', kind: 'get', options: getOptions() });
+  h.m.handleFillItem({ item: v.copy() });
+  await until(() => h.m.getState().owner.stage === 'signing', 'signing 3');
+  p.emit({ type: 'decline', id: 'g3', how: 'fallback' });                    // Another way while signing
+  assert.deepEqual(p.last('reply'), { type: 'reply', id: 'g3', fallback: true });
+  release();
+  await wait(30);
+  assert.equal(p.replies().length, 1);
 });
 
 test('fillItem: other site or disallowed id keeps waiting; an inactive owner tab is never advanced', async () => {
@@ -651,4 +696,84 @@ test('save: busy behind a sign-in, promotion, tab change, timeout and abort', as
   assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
   await wait(20);
   assert.equal(h.calls.recoveryPut.length, 0);
+});
+
+test('a request id sent again while its save or sign-in is in flight acts only for the newer request and never strands the popup', async () => {
+  for (const variant of ['abort first', 'supersede']) {
+    const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    let release; h.gate.hold = new Promise((r) => { release = r; });
+    p.emit({ type: 'request', id: 'X', kind: 'create', options: createOptions() });
+    p.emit({ type: 'approve', id: 'X', stage: 'pick-login', choice: 'new' });
+    await until(() => h.calls.recoveryInFlight === 1, 'first save in flight: ' + variant);
+    if (variant === 'abort first') p.emit({ type: 'cancel', id: 'X' });
+    p.emit({ type: 'request', id: 'X', kind: 'create', options: createOptions() });   // the page sends the same id again
+    assert.deepEqual(h.m.getState().owner, { id: 'X', stage: 'pick-login', tabId: 1, origin: ORIGIN, pick: 2 }, variant);
+    release();
+    await until(() => h.calls.recoveryRemove.length === 1, 'first copy removed: ' + variant);
+    await wait(30);
+    assert.equal(h.calls.autosave.length, 0, variant);                         // the first save is not sent under the newer request's name
+    assert.equal(p.replies().filter((m) => m.credential).length, 0, variant);
+    assert.deepEqual(h.m.getState().pending, [{ id: 'X', kind: 'create', stage: 'pick-login', tabId: 1 }], variant);
+    assert.equal(h.m.getState().owner.pick, 2, variant);
+    p.emit({ type: 'decline', id: 'X', how: 'cancel' });                       // the newer request still ends normally
+    assert.deepEqual(h.m.getState(), { owner: null, pending: [] }, variant);
+    const other = makePort(2, { id: 2, windowId: 10 }); h.m.onConnect(other);
+    h.setActive({ tabId: 2, windowId: 10 });
+    other.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+    assert.equal(other.state(), 'waiting', variant);                           // the popup is free for other tabs
+  }
+  // the same for a sign-in that is being signed
+  const v = await vaultItem();
+  let release; const signGate = new Promise((r) => { release = r; });
+  const h = harness({ signGate }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'X', kind: 'get', options: getOptions() });
+  h.m.handleFillItem({ item: v.copy() });
+  await until(() => h.m.getState().owner.stage === 'signing', 'signing');
+  p.emit({ type: 'cancel', id: 'X' });
+  p.emit({ type: 'request', id: 'X', kind: 'get', options: getOptions() });
+  release();
+  await wait(30);
+  assert.equal(p.replies().length, 0);
+  assert.deepEqual(h.m.getState().owner, { id: 'X', stage: 'waiting', tabId: 1, origin: ORIGIN });
+  p.emit({ type: 'decline', id: 'X', how: 'cancel' });
+  assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
+});
+
+test('a request from a tab that is not the active tab of the focused window waits; becoming active opens it', async () => {
+  for (const kind of ['create', 'get']) {
+    const options = () => (kind === 'create' ? createOptions() : getOptions());
+    const opened = kind === 'create' ? 'pick-login' : 'waiting';
+    // a background tab of the focused window
+    let h = harness(); const bg = makePort(1, { id: 2, windowId: 10 }); const fg = makePort(2, { id: 1, windowId: 10 });
+    h.m.onConnect(bg); h.m.onConnect(fg);
+    bg.emit({ type: 'request', id: 'bg', kind, options: options() });
+    assert.equal(bg.state(), 'busy', kind);
+    assert.deepEqual(h.calls.showPopup, [], kind);                           // no popup for a tab nobody looks at
+    assert.equal(h.m.getState().owner, null, kind);
+    assert.equal(h.m.handleCapture(PICK), false, kind);                      // fills in the visible tab stay ordinary fills
+    fg.emit({ type: 'request', id: 'fg', kind: 'get', options: getOptions() });
+    assert.equal(fg.state(), 'waiting', kind);                               // the visible tab is served
+    assert.equal(h.m.getState().owner.id, 'fg', kind);
+    fg.emit({ type: 'decline', id: 'fg', how: 'cancel' });
+    assert.equal(bg.state(), 'busy', kind);                                  // a free slot alone does not open it
+    h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+    assert.equal(bg.state(), opened, kind);
+    assert.equal(h.m.getState().owner.id, 'bg', kind);
+    assert.deepEqual(h.calls.showPopup, [PAGE, PAGE], kind);
+    // the active tab of a window that does not have the focus
+    h = harness(); const w2 = makePort(3, { id: 3, windowId: 20 }); h.m.onConnect(w2);
+    w2.emit({ type: 'request', id: 'w2', kind, options: options() });
+    assert.equal(w2.state(), 'busy', kind);
+    assert.deepEqual(h.calls.showPopup, [], kind);
+    h.setActive({ tabId: 3, windowId: 20 }); h.m.onWindowFocusChanged(20);
+    assert.equal(w2.state(), opened, kind);
+    // the active tab is not known
+    h = harness(); const p = makePort(4, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    h.setActive(null);
+    p.emit({ type: 'request', id: 'r1', kind, options: options() });
+    assert.equal(p.state(), 'busy', kind);
+    assert.deepEqual(h.calls.showPopup, [], kind);
+    h.setActive({ tabId: 1, windowId: 10 }); h.m.onTabActivated({ tabId: 1, windowId: 10 });
+    assert.equal(p.state(), opened, kind);
+  }
 });
