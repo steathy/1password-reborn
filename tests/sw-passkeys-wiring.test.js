@@ -100,6 +100,9 @@ test('save: capture fields replace the page; the fill gives one combined save an
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  assert.equal(c.card().state, 'offer');
+  assert.equal(env.calls.popup, 0);                                           // nothing opens by itself
+  await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' }); // Update login
   assert.equal(c.card().state, 'pick-login');
   assert.equal(env.calls.popup, 1);
   env.sandbox.Agent.Fa(page());
@@ -115,7 +118,7 @@ test('save: capture fields replace the page; the fill gives one combined save an
     [['username', 'text', 'alice@example.com'], ['password', 'password', 'hunter2'], ['passkey', 'text', 'PK']]);
   await until(() => c.posted.some((m) => m.type === 'reply'), 'reply');
   assert.ok(c.posted.find((m) => m.type === 'reply').credential);            // no Done: the site has the passkey
-  assert.deepEqual(c.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['pick-login', 'none']);
+  assert.deepEqual(c.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['offer', 'pick-login', 'none']);
   assert.equal(JSON.stringify(c.posted).includes('hunter2'), false);
   assert.equal(env.logs.some((l) => l.text.includes('hunter2')), false);
   noErrors(env);
@@ -126,6 +129,7 @@ test('while a pick waits every fill is emptied, also one with page ops', async (
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
   env.sandbox.AgentHandlers.executeFillScript({ script: [['fill_by_opid', '__3', 'x']] });
   assert.deepEqual(env.calls.executed[0].script, {});
   assert.equal(c.card().state, 'pick-login');
@@ -139,6 +143,7 @@ test('a pick for another account is copied as picked, with no card in between', 
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
   env.sandbox.Agent.Fa(page());
   env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [
     { action: 'fill', values: ['__op4us', 'bob'] }, { action: 'fill', values: ['__op4pw', 'pw-bob'] }] }] });
@@ -146,7 +151,7 @@ test('a pick for another account is copied as picked, with no card in between', 
   await until(() => env.calls.autosave.length === 1, 'save');
   assert.deepEqual(env.calls.autosave[0][0].collectedDocument.fields.slice(0, 2).map((f) => f.value), ['bob', 'pw-bob']);
   await until(() => c.posted.some((m) => m.type === 'reply'), 'reply');
-  assert.deepEqual(c.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['pick-login', 'none']);
+  assert.deepEqual(c.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['offer', 'pick-login', 'none']);
   // The pick is over: a later fill of page fields is an ordinary fill again.
   env.sandbox.AgentHandlers.executeFillScript({ script: [{ action: 'fill', values: ['__1', 'typed'] }] });
   assert.deepEqual(env.calls.executed.at(-1).script, [{ action: 'fill', values: ['__1', 'typed'] }]);
@@ -159,6 +164,7 @@ test('a late fill of a cancelled pick on another tab is never taken by the next 
   await ticks(5);
   const a = connect(env);
   await a.send({ type: 'request', id: 'a', kind: 'create', options: CREATE });
+  await a.send({ type: 'approve', id: 'a', stage: 'offer', choice: 'pick' });
   env.sandbox.Agent.Fa(page('old-document'));
   env.chrome.tabs.onActivated.fns[0]({ tabId: 6, windowId: 1 });
   assert.ok(a.posted.some((m) => m.type === 'reply' && m.error && m.error.name === 'NotAllowedError'));
@@ -169,6 +175,8 @@ test('a late fill of a cancelled pick on another tab is never taken by the next 
     onMessage: msg, onDisconnect: listener(), postMessage: (m) => posted.push(copy(m)),
   });
   msg.fns[0]({ type: 'request', id: 'b', kind: 'create', options: { ...CREATE, rp: { id: 'example.com', name: 'Example' } } });
+  await ticks(10);
+  msg.fns[0]({ type: 'approve', id: 'b', stage: 'offer', choice: 'pick' });
   await ticks(10);
   env.sandbox.Agent.Fa({ pageDetails: [{ documentUUID: 'new-document', url: 'https://example.com/', fields: [] }] });
   env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'old-document', url: 'https://webauthn.io/', script: [
@@ -185,6 +193,7 @@ test('entries of different documents are never combined', async () => {
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
   const two = page('d1');
   two.pageDetails.push({ documentUUID: 'd2', url: 'https://webauthn.io/frame', fields: [] });
   env.sandbox.Agent.Fa(two);
@@ -207,7 +216,9 @@ test('I1: a create promoted while a fill is processed takes no entry of the prev
   const a = connect(env), b = connect(env);
   const other = { ...CREATE, user: { id: 'BQYH', name: 'alice@example.com', displayName: 'Alice' } };
   await a.send({ type: 'request', id: 'A', kind: 'create', options: CREATE });
+  await a.send({ type: 'approve', id: 'A', stage: 'offer', choice: 'pick' });
   await b.send({ type: 'request', id: 'B', kind: 'create', options: other });
+  await b.send({ type: 'approve', id: 'B', stage: 'offer', choice: 'pick' });   // busy behind A
   env.sandbox.Agent.Fa({ pageDetails: [
     { documentUUID: 'd1', url: 'https://webauthn.io/', fields: [] },
     { documentUUID: 'd2', url: 'https://webauthn.io/frame', fields: [] }] });
@@ -228,7 +239,7 @@ test('save, then sign in with what was saved: one pick each; the fill that shows
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+  await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });
   await until(() => c.posted.some((m) => m.type === 'reply'), 'registration');
   const passkey = env.calls.autosave[0][0].collectedDocument.fields.find((f) => f.htmlName === 'passkey').value;   // what 1Password keeps and fills back
   await until(() => env.calls.menus.length === 3, 'Re-save offered');
@@ -247,11 +258,13 @@ test('save, then sign in with what was saved: one pick each; the fill that shows
   noErrors(env);
 });
 
-test('a save asked from a background tab waits: no popup, the visible tab fills as usual; switching to it opens the pick', async () => {
+test('a save in a background tab shows its card there; Update login from it waits: no popup, the visible tab fills as usual; switching to it opens the pick', async () => {
   const env = boot();                                                          // the active tab is 5
   await ticks(5);
   const bg = connect(env, 6, 'https://example.com');
   await bg.send({ type: 'request', id: 'b1', kind: 'create', options: { ...CREATE, rp: { id: 'example.com', name: 'Example' } } });
+  assert.equal(bg.card().state, 'offer');
+  await bg.send({ type: 'approve', id: 'b1', stage: 'offer', choice: 'pick' });
   assert.equal(bg.card().state, 'busy');
   assert.equal(env.calls.popup, 0);
   env.sandbox.Agent.Fa(page());                                                 // an ordinary fill on tab 5
@@ -270,7 +283,7 @@ test('a request id sent again right behind the New login click never strands the
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'X', kind: 'create', options: CREATE });
-  c.emit({ type: 'approve', id: 'X', stage: 'pick-login', choice: 'new' });     // the user's click …
+  c.emit({ type: 'approve', id: 'X', stage: 'offer', choice: 'new' });          // the user's click …
   c.emit({ type: 'cancel', id: 'X' });                                           // … and the page's own messages in the same turn
   c.emit({ type: 'request', id: 'X', kind: 'create', options: CREATE });
   await new Promise((r) => setTimeout(r, 80));
@@ -297,7 +310,7 @@ test('menu: nothing while no passkey is unsaved; Re-save and Discard all while a
   assert.deepEqual(env.calls.menus, []);                                      // no Reborn menu at all
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+  await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });
   await until(() => env.calls.menus.length === 3, 'menu with a copy');
   const id = Object.keys(env.store.session['op4pk.recovery'])[0];
   assert.deepEqual(env.calls.menus.map((m) => [m.id, m.parentId, m.title, m.type]), [
@@ -323,9 +336,9 @@ test('storage: the index and settings keys of the other editions are never read 
   await ticks(10);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  assert.equal(c.card().state, 'pick-login');                                 // a stored "off" switch changes nothing
-  assert.equal(env.calls.popup, 1);
-  await c.send({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+  assert.equal(c.card().state, 'offer');                                      // a stored "off" switch changes nothing
+  assert.equal(env.calls.popup, 0);
+  await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });
   await until(() => c.posted.some((m) => m.type === 'reply'), 'reply');
   const g = connect(env);
   await g.send({ type: 'request', id: 'g1', kind: 'get', options: GET });

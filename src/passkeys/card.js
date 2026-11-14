@@ -19,11 +19,13 @@
     'button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid #c9c9d1;background:#f4f4f6;cursor:pointer}',
   ].join('');
 
-  // Buttons are [action, label, stage?, choice?]. 'choose' sends the one approval there is ("New
-  // login", with its stage and choice); 'fallback' hands the request to the browser's own passkey
+  // Buttons are [action, label, stage?, choice?]. 'choose' sends an approval with its stage and
+  // choice (New login, Update login); 'fallback' hands the request to the browser's own passkey
   // dialog; 'cancel' ends it. Every card carries both exits.
   const EXITS = [['fallback', 'Another way'], ['cancel', 'Cancel']];
   const TEXT = {
+    'offer': (d) => ({ title: 'Save this passkey in 1Password', body: d.name ? d.site + ' · ' + d.name : d.site,
+      buttons: [['choose', 'New login', 'offer', 'new'], ['choose', 'Update login', 'offer', 'pick']].concat(EXITS) }),
     'pick-login': (d) => ({ title: 'Pick a login for this passkey', body: d.name ? d.site + ' · ' + d.name : d.site,
       buttons: [['choose', 'New login', 'pick-login', 'new']].concat(EXITS) }),
     'waiting': () => ({ title: 'Pick the passkey in 1Password', buttons: EXITS }),

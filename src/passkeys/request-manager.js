@@ -115,11 +115,14 @@
     }
 
     /* ---------- approvals: resolved by (port, id), then by the record's own stage ---------- */
-    // One approval is left: "New login" on the pick card. Everything else a request needs is the
-    // user's pick in the 1Password popup, which arrives through handleCapture or handleFillItem.
+    // Only a save has approvals: New login and Update login on its offer card, and New login on
+    // the pick card. A sign-in needs none: the user's pick in the 1Password popup is its approval
+    // and arrives through handleFillItem.
     function approve(rec, msg) {
-      if (msg.stage !== rec.stage) return;
-      if (rec.kind === 'create' && rec.stage === 'pick-login' && msg.choice === 'new') pickDone(rec, null);
+      if (msg.stage !== rec.stage || rec.kind !== 'create') return;
+      if (rec.stage === 'offer' && msg.choice === 'new') { createSave(rec, null); return; }
+      if (rec.stage === 'offer' && msg.choice === 'pick') return openPick(rec);
+      if (rec.stage === 'pick-login' && msg.choice === 'new') pickDone(rec, null);
     }
 
     /* ---------- create ---------- */
@@ -138,14 +141,18 @@
       const n = normTitle(userLabel(rec));
       return n ? '[Passkey] ' + n : '[Passkey]';
     }
-    // A save takes the popup slot like a sign-in: the adapter reports Reborn's capture fields for
-    // the owner's page, and the app's fill of the picked login comes back through handleCapture.
-    // The passkey is generated only after the pick, so an abandoned pick leaves no key behind.
-    // A site's excludeCredentials list is not consulted: the user decides what to save.
+    // A save starts with its offer card and nothing opens by itself: New login saves a passkey-only
+    // login at once, Update login opens the pick. A site's excludeCredentials list is not
+    // consulted: the user decides what to save.
     function startCreate(rec) {
       rec.title = normTitle(defaultTitle(rec));
-      openPick(rec);
+      rec.stage = 'offer';
+      card(rec, 'offer', { site: siteName(rec), name: userLabel(rec) });
     }
+    // Update login: the request takes the popup slot like a sign-in. The adapter reports Reborn's
+    // capture fields for the owner's page, and the app's fill of the picked login comes back
+    // through handleCapture. The passkey is generated only after the pick, so an abandoned pick
+    // leaves no key behind.
     function openPick(rec) {
       if ((owner && owner !== rec) || !isActiveTab(rec)) { rec.stage = 'busy'; return card(rec, 'busy'); }
       if (!isConnected()) { rec.stage = 'start'; return card(rec, 'not-connected'); }

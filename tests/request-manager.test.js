@@ -90,11 +90,17 @@ const PICK = { username: 'alice@example.com', password: 'hunter2', passkeys: [] 
 
 /* ---------- save ---------- */
 
-test('save: the pick opens at intake; a capture gives one combined save and the credential at once', async () => {
+test('save: the offer card comes first; Update login opens the pick; a capture gives one combined save and the credential at once', async () => {
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   let savesAtReply = -1;
   p.onPost = (m) => { if (m.type === 'reply') savesAtReply = h.calls.autosave.length; };
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+  assert.deepEqual(p.last('card').card, { state: 'offer', site: 'Example', name: 'Alice' });
+  assert.deepEqual(h.calls.showPopup, []);                                   // nothing opens by itself
+  assert.equal(h.m.getState().owner, null);
+  assert.deepEqual(h.m.getState().pending, [{ id: 'c1', kind: 'create', stage: 'offer', tabId: 1 }]);
+  assert.equal(h.m.handleCapture(PICK), false);                              // no pick waits yet: fills stay ordinary fills
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });     // Update login
   assert.deepEqual(p.last('card').card, { state: 'pick-login', site: 'Example', name: 'Alice' });
   assert.deepEqual(h.calls.showPopup, [PAGE]);
   assert.deepEqual(h.m.getState().owner, { id: 'c1', stage: 'pick-login', tabId: 1, origin: ORIGIN, pick: 1 });
@@ -126,7 +132,7 @@ test('save: the pick opens at intake; a capture gives one combined save and the 
   assert.deepEqual(reply.credential.response.transports, ['internal']);
   assert.equal(reply.credential.response.publicKeyAlgorithm, -7);
   assert.deepEqual(reply.credential.clientExtensionResults, {});
-  assert.deepEqual(p.cards(), ['pick-login', 'none']);                       // no other card, no Done
+  assert.deepEqual(p.cards(), ['offer', 'pick-login', 'none']);              // no other card, no Done
   assert.equal(JSON.stringify(p.sent).includes('hunter2'), false, 'no message to the page carries the password');
   assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
   assert.equal(h.timers[0].cleared, true);
@@ -136,8 +142,8 @@ test('save: New login gives a passkey-only login; default title without a displa
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   const o = createOptions({ extensions: { credProps: true } }); o.user = { ...o.user, displayName: '' };
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: o });
-  assert.deepEqual(p.last('card').card, { state: 'pick-login', site: 'Example', name: 'alice@example.com' });
-  p.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+  assert.deepEqual(p.last('card').card, { state: 'offer', site: 'Example', name: 'alice@example.com' });
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });       // New login: no pick, no popup
   assert.equal(h.m.getState().owner, null);
   await until(() => p.last('reply'), 'reply');
   const { login, doc } = h.calls.autosave[0];
@@ -150,7 +156,8 @@ test('save: New login gives a passkey-only login; default title without a displa
   assert.equal(doc.displayTitle, '[Passkey] Example - alice@example.com');
   assert.equal(doc.title, '[Passkey] alice@example.com');
   assert.deepEqual(p.last('reply').credential.clientExtensionResults, { credProps: { rk: true } });
-  assert.deepEqual(p.cards(), ['pick-login', 'none']);
+  assert.deepEqual(p.cards(), ['offer', 'none']);
+  assert.deepEqual(h.calls.showPopup, []);
 });
 
 test('save: the pick is used as it is (no password, a passkey as password, another account, no username)', async () => {
@@ -167,13 +174,14 @@ test('save: the pick is used as it is (no password, a passkey as password, anoth
   for (const [label, found, want] of cases) {
     const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
     p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+    p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
     assert.equal(h.m.handleCapture(found), true, label);
     await until(() => p.last('reply'), 'reply: ' + label);
     const { login, doc } = h.calls.autosave[0];
     assert.deepEqual(login.secureContents.fields.map((f) => (f.name === 'passkey' ? 'PK' : f.value)), want, label);
     assert.deepEqual(doc.fields.map((f) => f.htmlName), want.length === 3 ? ['username', 'password', 'passkey'] : ['username', 'passkey'], label);
     assert.equal(JSON.stringify(h.calls.autosave[0]).split(pk).length, 1, label + ': the picked passkey is never saved again');
-    assert.deepEqual(p.cards(), ['pick-login', 'none'], label);               // no refusal, no question
+    assert.deepEqual(p.cards(), ['offer', 'pick-login', 'none'], label);      // no refusal, no question
     assert.ok(p.last('reply').credential, label);
   }
 });
@@ -181,6 +189,7 @@ test('save: the pick is used as it is (no password, a passkey as password, anoth
 test('save: a fill with nothing for Reborn keeps waiting; a fill for another tab and a late fill are not taken', async () => {
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
   const sent = p.sent.length;
   assert.equal(h.m.handleCapture({}), true);                                // another frame: nothing for us
   assert.equal(h.m.handleCapture(null), true);
@@ -201,8 +210,8 @@ test('save: a fill with nothing for Reborn keeps waiting; a fill for another tab
 test('save: excludeCredentials is ignored', async () => {
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions({ excludeCredentials: [{ type: 'public-key', id: idOf(CRED) }] }) });
-  assert.equal(p.state(), 'pick-login');
-  p.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+  assert.equal(p.state(), 'offer');
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });
   await until(() => p.last('reply'), 'reply');
   assert.ok(p.last('reply').credential);
   p.emit({ type: 'request', id: 'c2', kind: 'create', options: createOptions({ excludeCredentials: [{ type: 'public-key', id: idOf(CRED) }] }) });
@@ -210,35 +219,56 @@ test('save: excludeCredentials is ignored', async () => {
   assert.equal(p.last('reply').error.name, 'NotAllowedError');              // a cancel is never an InvalidStateError
 });
 
-test('save: only New login in pick-login approves; Another way, Cancel and a page abort end the request', async () => {
+test("save: only the card's own choices approve (New login, Update login, then New login on the pick card); exits end the request", async () => {
   const h = harness();
   const p1 = makePort(1, { id: 1, windowId: 10 }); const p2 = makePort(2, { id: 2, windowId: 10 });
   h.m.onConnect(p1); h.m.onConnect(p2);
   p1.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
   for (const msg of [
-    { type: 'approve', id: 'c1', stage: 'prompt' }, { type: 'approve', id: 'c1', stage: 'start' },
-    { type: 'approve', id: 'c1', stage: 'saving' }, { type: 'approve', id: 'c1', stage: 'pick-login' },
-    { type: 'approve', id: 'c1', stage: 'pick-login', choice: 'again' }, { type: 'approve', id: 'c1', stage: 'pick-login', choice: 'use' },
-    { type: 'approve', id: 'c1', stage: 'pick-confirm', choice: 'new' }, { type: 'approve', id: 'zz', stage: 'pick-login', choice: 'new' },
+    { type: 'approve', id: 'c1', stage: 'prompt' }, { type: 'approve', id: 'c1', stage: 'start', choice: 'new' },
+    { type: 'approve', id: 'c1', stage: 'saving' }, { type: 'approve', id: 'c1', stage: 'offer' },
+    { type: 'approve', id: 'c1', stage: 'offer', choice: 'again' }, { type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' },
+    { type: 'approve', id: 'zz', stage: 'offer', choice: 'new' },
   ]) p1.emit(msg);
-  p2.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });   // other port, same id
+  p2.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });        // other port, same id
   await wait(30);
   assert.equal(h.calls.recoveryPut.length, 0);
+  assert.deepEqual(h.calls.showPopup, []);
+  assert.equal(p1.state(), 'offer');
+  p1.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });        // Update login
   assert.equal(h.m.getState().owner.stage, 'pick-login');
-  p1.emit({ type: 'decline', id: 'c1', how: 'fallback' });
-  assert.deepEqual(p1.last('reply'), { type: 'reply', id: 'c1', fallback: true });
-  assert.equal(h.m.getState().owner, null);
-  p1.emit({ type: 'request', id: 'c2', kind: 'create', options: createOptions() });
-  p1.emit({ type: 'decline', id: 'c2', how: 'cancel' });
-  assert.equal(p1.last('reply').error.name, 'NotAllowedError');
-  p1.emit({ type: 'request', id: 'c3', kind: 'create', options: createOptions() });
-  p1.emit({ type: 'cancel', id: 'c3' });                                    // page abort → retired silently
-  assert.equal(p1.replies().length, 2);
-  p1.emit({ type: 'approve', id: 'c3', stage: 'pick-login', choice: 'new' });   // retired
+  for (const msg of [
+    { type: 'approve', id: 'c1', stage: 'offer', choice: 'new' }, { type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' },
+    { type: 'approve', id: 'c1', stage: 'pick-login' }, { type: 'approve', id: 'c1', stage: 'pick-login', choice: 'again' },
+    { type: 'approve', id: 'c1', stage: 'pick-login', choice: 'use' }, { type: 'approve', id: 'c1', stage: 'pick-login', choice: 'pick' },
+    { type: 'approve', id: 'c1', stage: 'pick-confirm', choice: 'new' },
+  ]) p1.emit(msg);
   await wait(30);
   assert.equal(h.calls.recoveryPut.length, 0);
-  assert.equal(h.calls.autosave.length, 0);
-  assert.deepEqual(h.calls.showPopup, [PAGE, PAGE, PAGE]);
+  assert.deepEqual(h.calls.showPopup, [PAGE]);                                  // opened once, by Update login
+  assert.equal(h.m.getState().owner.stage, 'pick-login');
+  p1.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });    // New login on the pick card: a change of mind
+  assert.equal(h.m.getState().owner, null);
+  await until(() => p1.last('reply'), 'reply');
+  assert.deepEqual(h.calls.autosave[0].doc.fields.map((f) => f.htmlName), ['username', 'passkey']);
+  // exits
+  p1.emit({ type: 'request', id: 'c2', kind: 'create', options: createOptions() });
+  p1.emit({ type: 'decline', id: 'c2', how: 'fallback' });                      // Another way on the offer card
+  assert.deepEqual(p1.last('reply'), { type: 'reply', id: 'c2', fallback: true });
+  p1.emit({ type: 'request', id: 'c3', kind: 'create', options: createOptions() });
+  p1.emit({ type: 'approve', id: 'c3', stage: 'offer', choice: 'pick' });
+  p1.emit({ type: 'decline', id: 'c3', how: 'fallback' });                      // Another way on the pick card
+  assert.deepEqual(p1.last('reply'), { type: 'reply', id: 'c3', fallback: true });
+  assert.equal(h.m.getState().owner, null);
+  p1.emit({ type: 'request', id: 'c4', kind: 'create', options: createOptions() });
+  p1.emit({ type: 'decline', id: 'c4', how: 'cancel' });
+  assert.equal(p1.last('reply').error.name, 'NotAllowedError');
+  p1.emit({ type: 'request', id: 'c5', kind: 'create', options: createOptions() });
+  p1.emit({ type: 'cancel', id: 'c5' });                                        // page abort → retired silently
+  assert.equal(p1.replies().length, 4);
+  p1.emit({ type: 'approve', id: 'c5', stage: 'offer', choice: 'new' });        // retired
+  await wait(30);
+  assert.equal(h.calls.autosave.length, 1);
   p1.disconnect();
   assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
 });
@@ -253,7 +283,7 @@ test('intake: invalid rpId, unknown kind, not connected, supersede on the same t
   assert.equal(h.timers[0].ms, 30000);
   p.emit({ type: 'request', id: 'c2', kind: 'create', options: createOptions({ timeout: 10000000 }) });
   assert.equal(p.sent.find((m) => m.type === 'reply' && m.id === 'c1').error.message, 'superseded by a newer request');
-  assert.equal(h.m.getState().owner.id, 'c2');                              // the newer request took the popup
+  assert.deepEqual(h.m.getState().pending.map((r) => [r.id, r.stage]), [['c2', 'offer']]);   // the newer request replaced it
   assert.equal(h.timers[1].ms, 600000);
   p.emit({ type: 'request', id: 'c3', kind: 'create', options: createOptions() });
   assert.equal(h.timers[2].ms, 120000);
@@ -277,6 +307,7 @@ test('save: nothing is sent before the recovery copy is stored; a failed write r
   let h = harness(); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   let release; h.gate.hold = new Promise((r) => { release = r; });
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
   h.m.handleCapture(PICK);
   await until(() => h.calls.recoveryInFlight === 1, 'recovery write in flight');
   assert.equal(h.calls.autosave.length, 0);
@@ -294,6 +325,7 @@ test('save: nothing is sent before the recovery copy is stored; a failed write r
   h = harness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   h.gate.fail = new Error('QUOTA_BYTES quota exceeded');
   p.emit({ type: 'request', id: 'c2', kind: 'create', options: createOptions() });
+  p.emit({ type: 'approve', id: 'c2', stage: 'offer', choice: 'pick' });
   h.m.handleCapture(PICK);
   await until(() => p.last('reply'), 'error reply');
   assert.equal(p.last('reply').error.name, 'NotAllowedError');
@@ -304,6 +336,7 @@ test('save: nothing is sent before the recovery copy is stored; a failed write r
   h = harness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   h.gate.hold = new Promise((r) => { release = r; });
   p.emit({ type: 'request', id: 'c3', kind: 'create', options: createOptions() });
+  p.emit({ type: 'approve', id: 'c3', stage: 'offer', choice: 'pick' });
   h.m.handleCapture(PICK);
   await until(() => h.calls.recoveryInFlight === 1, 'recovery write in flight');
   p.emit({ type: 'cancel', id: 'c3' });
@@ -317,6 +350,7 @@ test('save: nothing is sent before the recovery copy is stored; a failed write r
   h = harness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   h.gate.hold = new Promise((r) => { release = r; });
   p.emit({ type: 'request', id: 'c4', kind: 'create', options: createOptions() });
+  p.emit({ type: 'approve', id: 'c4', stage: 'offer', choice: 'pick' });
   h.m.handleCapture(PICK);
   await until(() => h.calls.recoveryInFlight === 1, 'recovery write in flight');
   p.emit({ type: 'decline', id: 'c4', how: 'fallback' });
@@ -331,6 +365,7 @@ test('save: the app connection gone at the pick or while storing shows not-conne
   // (a) gone when the pick arrives
   let h = harness(); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
   assert.equal(p.state(), 'pick-login');
   h.setConnected(false);
   assert.equal(h.m.handleCapture(PICK), true);
@@ -351,6 +386,7 @@ test('save: the app connection gone at the pick or while storing shows not-conne
   h = harness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   let release; h.gate.hold = new Promise((r) => { release = r; });
   p.emit({ type: 'request', id: 'c2', kind: 'create', options: createOptions() });
+  p.emit({ type: 'approve', id: 'c2', stage: 'offer', choice: 'pick' });
   h.m.handleCapture(PICK);
   await until(() => h.calls.recoveryInFlight === 1, 'recovery write in flight');
   h.setConnected(false);
@@ -363,6 +399,20 @@ test('save: the app connection gone at the pick or while storing shows not-conne
   assert.deepEqual(h.m.getState().pending.map((r) => r.stage), ['start']);
   p.emit({ type: 'decline', id: 'c2', how: 'cancel' });
   assert.equal(p.last('reply').error.name, 'NotAllowedError');
+  // (c) gone when a button of the offer card is clicked
+  for (const choice of ['new', 'pick']) {
+    h = harness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'c3', kind: 'create', options: createOptions() });
+    h.setConnected(false);
+    p.emit({ type: 'approve', id: 'c3', stage: 'offer', choice });
+    await wait(30);
+    assert.equal(p.state(), 'not-connected', choice);
+    assert.deepEqual(h.calls.showPopup, [], choice);
+    assert.equal(h.calls.recoveryPut.length, 0, choice);
+    assert.equal(h.m.getState().owner, null, choice);
+    p.emit({ type: 'decline', id: 'c3', how: 'cancel' });
+    assert.equal(p.last('reply').error.name, 'NotAllowedError', choice);
+  }
 });
 
 test('save: the title sent to 1Password 7 leaves the site name out', async () => {
@@ -374,7 +424,7 @@ test('save: the title sent to 1Password 7 leaves the site name out', async () =>
   for (const [user, title7, title] of cases) {
     const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
     p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions(user ? { user } : {}) });
-    p.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+    p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });
     await until(() => h.calls.autosave.length === 1, 'autosave ' + title7);
     const { login, doc } = h.calls.autosave[0];
     assert.equal(doc.title, title7);
@@ -389,6 +439,7 @@ test('save: timeout, a newer request, a disconnect or Cancel while the copy is s
     const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
     let release; h.gate.hold = new Promise((r) => { release = r; });
     p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+    p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
     h.m.handleCapture(PICK);
     await until(() => h.calls.recoveryInFlight === 1, 'recovery write in flight: ' + ending);
     if (ending === 'timeout') h.timers[0].fn();
@@ -408,6 +459,7 @@ test('save: timeout, a newer request, a disconnect or Cancel while the copy is s
 test('save: a save call that throws ends the request and keeps no copy', async () => {
   const h = harness({ autosaveThrows: true }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
   h.m.handleCapture(PICK);
   await until(() => p.last('reply'), 'error reply');
   assert.equal(p.last('reply').error.name, 'NotAllowedError');
@@ -664,14 +716,17 @@ test('promotion: on slot release with B active, on later activation, on window f
   assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
 });
 
-test('save: busy behind a sign-in, promotion, tab change, timeout and abort', async () => {
+test('save: Update login waits as busy behind a sign-in; New login does not; promotion, tab change, timeout and abort', async () => {
   let h = harness();
   const pA = makePort(1, { id: 1, windowId: 10 }); const pB = makePort(2, { id: 2, windowId: 10 });
   h.m.onConnect(pA); h.m.onConnect(pB);
   pA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
   pB.emit({ type: 'request', id: 'C', kind: 'create', options: createOptions() });
+  assert.equal(pB.state(), 'offer');                                         // the offer card needs no popup
+  pB.emit({ type: 'approve', id: 'C', stage: 'offer', choice: 'pick' });     // Update login while tab 1 holds the popup
   assert.equal(pB.state(), 'busy');
-  pB.emit({ type: 'approve', id: 'C', stage: 'pick-login', choice: 'new' });   // New login is not on the busy card
+  pB.emit({ type: 'approve', id: 'C', stage: 'pick-login', choice: 'new' });   // nothing on the busy card approves
+  pB.emit({ type: 'approve', id: 'C', stage: 'offer', choice: 'new' });
   pB.emit({ type: 'approve', id: 'C', stage: 'busy', choice: 'new' });
   await wait(30);
   assert.equal(h.calls.recoveryPut.length, 0);
@@ -685,8 +740,20 @@ test('save: busy behind a sign-in, promotion, tab change, timeout and abort', as
   assert.equal(pB.last('reply').error.name, 'NotAllowedError');
   assert.equal(h.m.getState().owner, null);
   assert.equal(h.calls.recoveryPut.length, 0);
+  // New login needs no popup: a sign-in on another tab does not hold it up
+  h = harness(); const qA = makePort(1, { id: 1, windowId: 10 }); const qB = makePort(2, { id: 2, windowId: 10 });
+  h.m.onConnect(qA); h.m.onConnect(qB);
+  qA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
+  qB.emit({ type: 'request', id: 'C', kind: 'create', options: createOptions() });
+  qB.emit({ type: 'approve', id: 'C', stage: 'offer', choice: 'new' });
+  await until(() => qB.last('reply'), 'reply');
+  assert.ok(qB.last('reply').credential);
+  assert.equal(h.m.getState().owner.id, 'A');
+  // a tab change does not end a save that only shows its offer card; a timeout and a page abort do
   h = harness(); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+  h.setActive({ tabId: 3, windowId: 10 }); h.m.onTabActivated({ tabId: 3, windowId: 10 });
+  assert.equal(p.state(), 'offer');
   h.timers[0].fn();
   assert.equal(p.last('reply').error.name, 'NotAllowedError');
   assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
@@ -703,18 +770,19 @@ test('a request id sent again while its save or sign-in is in flight acts only f
     const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
     let release; h.gate.hold = new Promise((r) => { release = r; });
     p.emit({ type: 'request', id: 'X', kind: 'create', options: createOptions() });
-    p.emit({ type: 'approve', id: 'X', stage: 'pick-login', choice: 'new' });
+    p.emit({ type: 'approve', id: 'X', stage: 'offer', choice: 'new' });
     await until(() => h.calls.recoveryInFlight === 1, 'first save in flight: ' + variant);
     if (variant === 'abort first') p.emit({ type: 'cancel', id: 'X' });
     p.emit({ type: 'request', id: 'X', kind: 'create', options: createOptions() });   // the page sends the same id again
-    assert.deepEqual(h.m.getState().owner, { id: 'X', stage: 'pick-login', tabId: 1, origin: ORIGIN, pick: 2 }, variant);
+    p.emit({ type: 'approve', id: 'X', stage: 'offer', choice: 'pick' });             // Update login on the newer card: it owns the popup
+    assert.deepEqual(h.m.getState().owner, { id: 'X', stage: 'pick-login', tabId: 1, origin: ORIGIN, pick: 1 }, variant);
     release();
     await until(() => h.calls.recoveryRemove.length === 1, 'first copy removed: ' + variant);
     await wait(30);
     assert.equal(h.calls.autosave.length, 0, variant);                         // the first save is not sent under the newer request's name
     assert.equal(p.replies().filter((m) => m.credential).length, 0, variant);
     assert.deepEqual(h.m.getState().pending, [{ id: 'X', kind: 'create', stage: 'pick-login', tabId: 1 }], variant);
-    assert.equal(h.m.getState().owner.pick, 2, variant);
+    assert.equal(h.m.getState().owner.pick, 1, variant);
     p.emit({ type: 'decline', id: 'X', how: 'cancel' });                       // the newer request still ends normally
     assert.deepEqual(h.m.getState(), { owner: null, pending: [] }, variant);
     const other = makePort(2, { id: 2, windowId: 10 }); h.m.onConnect(other);
@@ -739,41 +807,49 @@ test('a request id sent again while its save or sign-in is in flight acts only f
   assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
 });
 
-test('a request from a tab that is not the active tab of the focused window waits; becoming active opens it', async () => {
-  for (const kind of ['create', 'get']) {
-    const options = () => (kind === 'create' ? createOptions() : getOptions());
-    const opened = kind === 'create' ? 'pick-login' : 'waiting';
-    // a background tab of the focused window
-    let h = harness(); const bg = makePort(1, { id: 2, windowId: 10 }); const fg = makePort(2, { id: 1, windowId: 10 });
-    h.m.onConnect(bg); h.m.onConnect(fg);
-    bg.emit({ type: 'request', id: 'bg', kind, options: options() });
-    assert.equal(bg.state(), 'busy', kind);
-    assert.deepEqual(h.calls.showPopup, [], kind);                           // no popup for a tab nobody looks at
-    assert.equal(h.m.getState().owner, null, kind);
-    assert.equal(h.m.handleCapture(PICK), false, kind);                      // fills in the visible tab stay ordinary fills
-    fg.emit({ type: 'request', id: 'fg', kind: 'get', options: getOptions() });
-    assert.equal(fg.state(), 'waiting', kind);                               // the visible tab is served
-    assert.equal(h.m.getState().owner.id, 'fg', kind);
-    fg.emit({ type: 'decline', id: 'fg', how: 'cancel' });
-    assert.equal(bg.state(), 'busy', kind);                                  // a free slot alone does not open it
-    h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
-    assert.equal(bg.state(), opened, kind);
-    assert.equal(h.m.getState().owner.id, 'bg', kind);
-    assert.deepEqual(h.calls.showPopup, [PAGE, PAGE], kind);
-    // the active tab of a window that does not have the focus
-    h = harness(); const w2 = makePort(3, { id: 3, windowId: 20 }); h.m.onConnect(w2);
-    w2.emit({ type: 'request', id: 'w2', kind, options: options() });
-    assert.equal(w2.state(), 'busy', kind);
-    assert.deepEqual(h.calls.showPopup, [], kind);
-    h.setActive({ tabId: 3, windowId: 20 }); h.m.onWindowFocusChanged(20);
-    assert.equal(w2.state(), opened, kind);
-    // the active tab is not known
-    h = harness(); const p = makePort(4, { id: 1, windowId: 10 }); h.m.onConnect(p);
-    h.setActive(null);
-    p.emit({ type: 'request', id: 'r1', kind, options: options() });
-    assert.equal(p.state(), 'busy', kind);
-    assert.deepEqual(h.calls.showPopup, [], kind);
-    h.setActive({ tabId: 1, windowId: 10 }); h.m.onTabActivated({ tabId: 1, windowId: 10 });
-    assert.equal(p.state(), opened, kind);
-  }
+test('only the active tab of the focused window opens the popup: a sign-in elsewhere waits, and so does Update login', async () => {
+  // a sign-in from a background tab of the focused window
+  let h = harness(); let bg = makePort(1, { id: 2, windowId: 10 }); let fg = makePort(2, { id: 1, windowId: 10 });
+  h.m.onConnect(bg); h.m.onConnect(fg);
+  bg.emit({ type: 'request', id: 'bg', kind: 'get', options: getOptions() });
+  assert.equal(bg.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);                                   // no popup for a tab nobody looks at
+  assert.equal(h.m.getState().owner, null);
+  fg.emit({ type: 'request', id: 'fg', kind: 'get', options: getOptions() });
+  assert.equal(fg.state(), 'waiting');                                       // the visible tab is served
+  assert.equal(h.m.getState().owner.id, 'fg');
+  fg.emit({ type: 'decline', id: 'fg', how: 'cancel' });
+  assert.equal(bg.state(), 'busy');                                          // a free slot alone does not open it
+  h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+  assert.equal(bg.state(), 'waiting');
+  assert.equal(h.m.getState().owner.id, 'bg');
+  assert.deepEqual(h.calls.showPopup, [PAGE, PAGE]);
+  // a sign-in from the active tab of a window that does not have the focus
+  h = harness(); const w2 = makePort(3, { id: 3, windowId: 20 }); h.m.onConnect(w2);
+  w2.emit({ type: 'request', id: 'w2', kind: 'get', options: getOptions() });
+  assert.equal(w2.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  h.setActive({ tabId: 3, windowId: 20 }); h.m.onWindowFocusChanged(20);
+  assert.equal(w2.state(), 'waiting');
+  // a sign-in while the active tab is not known
+  h = harness(); const p = makePort(4, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  h.setActive(null);
+  p.emit({ type: 'request', id: 'r1', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  h.setActive({ tabId: 1, windowId: 10 }); h.m.onTabActivated({ tabId: 1, windowId: 10 });
+  assert.equal(p.state(), 'waiting');
+  // a save in a background tab shows its offer card there; Update login from it waits until the tab is active
+  h = harness(); bg = makePort(1, { id: 2, windowId: 10 }); fg = makePort(2, { id: 1, windowId: 10 });
+  h.m.onConnect(bg); h.m.onConnect(fg);
+  bg.emit({ type: 'request', id: 'bg', kind: 'create', options: createOptions() });
+  assert.equal(bg.state(), 'offer');
+  bg.emit({ type: 'approve', id: 'bg', stage: 'offer', choice: 'pick' });
+  assert.equal(bg.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  assert.equal(h.m.getState().owner, null);
+  assert.equal(h.m.handleCapture(PICK), false);                              // fills in the visible tab stay ordinary fills
+  h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+  assert.equal(bg.state(), 'pick-login');
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
 });

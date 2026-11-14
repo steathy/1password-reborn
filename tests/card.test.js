@@ -24,11 +24,17 @@ const buttons = (card) => Array.from(card._root.querySelectorAll('button')).map(
 const button = (card, label) => Array.from(card._root.querySelectorAll('button')).find((b) => b.textContent === label);
 const title = (card) => card._root.querySelector('.title').textContent;
 const body = (card) => { const b = card._root.querySelector('.body'); return b ? b.textContent : null; };
-const STATES = [['pick-login', { site: 'GitHub', name: 'Alice' }], ['waiting'], ['notice', { text: 'That item has no passkey.' }], ['busy'], ['not-connected']];
+const STATES = [['offer', { site: 'GitHub', name: 'Alice' }], ['pick-login', { site: 'GitHub', name: 'Alice' }], ['waiting'], ['notice', { text: 'That item has no passkey.' }], ['busy'], ['not-connected']];
 
-test('exactly five states, each with its copy and buttons', () => {
+test('exactly six states, each with its copy and buttons', () => {
   const { card } = setup();
-  assert.deepEqual(Object.keys(TEXT).sort(), ['busy', 'not-connected', 'notice', 'pick-login', 'waiting']);
+  assert.deepEqual(Object.keys(TEXT).sort(), ['busy', 'not-connected', 'notice', 'offer', 'pick-login', 'waiting']);
+  card.show('offer', { site: 'GitHub', name: 'Alice' });
+  assert.equal(title(card), 'Save this passkey in 1Password');
+  assert.equal(body(card), 'GitHub · Alice');
+  assert.deepEqual(buttons(card), ['New login', 'Update login', 'Another way', 'Cancel']);
+  card.show('offer', { site: 'GitHub', name: '' });
+  assert.equal(body(card), 'GitHub');
   card.show('pick-login', { site: 'GitHub', name: 'Alice' });
   assert.equal(title(card), 'Pick a login for this passkey');
   assert.equal(body(card), 'GitHub · Alice');
@@ -84,8 +90,14 @@ test('script clicks and synthetic events do nothing; a trusted click after armin
   assert.deepEqual(t.calls.decline, []);
   t.advance(500);
   button(t.card, 'New login').click();
-  assert.deepEqual(t.calls.approve, [['pick-login', { choice: 'new' }]]);       // the only approval a card can send
+  assert.deepEqual(t.calls.approve, [['pick-login', { choice: 'new' }]]);
   assert.equal(button(t.card, 'New login').dataset.action, 'choose');
+  t.card.show('offer', { site: 'github.com', name: 'alice' });
+  t.advance(500);
+  button(t.card, 'New login').click();
+  button(t.card, 'Update login').click();
+  assert.deepEqual(t.calls.approve.slice(1), [['offer', { choice: 'new' }], ['offer', { choice: 'pick' }]]);   // with the one above: every approval a card can send
+  assert.equal(button(t.card, 'Update login').dataset.action, 'choose');
 });
 
 test('Another way sends fallback and Cancel sends cancel on every card; hide removes the card', () => {
@@ -96,7 +108,7 @@ test('Another way sends fallback and Cancel sends cancel on every card; hide rem
     button(t.card, 'Another way').click();
     button(t.card, 'Cancel').click();
   }
-  assert.deepEqual(t.calls.decline, ['fallback', 'cancel', 'fallback', 'cancel', 'fallback', 'cancel', 'fallback', 'cancel', 'fallback', 'cancel']);
+  assert.deepEqual(t.calls.decline, STATES.flatMap(() => ['fallback', 'cancel']));
   assert.deepEqual(t.calls.approve, []);
   t.card.hide();
   assert.equal(t.card.host.parentNode, null);
