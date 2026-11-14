@@ -89,7 +89,6 @@ test('sign-in: the sign-in set is added; a passkey is consumed; only hidden-fiel
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
-  await c.send({ type: 'approve', id: 'g1', stage: 'prompt' });
   assert.equal(c.card().state, 'waiting');
   env.sandbox.Agent.Fa(page());
   assert.deepEqual(env.calls.collected[0].pageDetails[0].fields.map((f) => [f.opid, f.htmlName, f.type]),
@@ -101,18 +100,17 @@ test('sign-in: the sign-in set is added; a passkey is consumed; only hidden-fiel
   assert.equal(c.card().text, 'That passkey could not be read.');
   env.sandbox.AgentHandlers.executeFillScript({ script: [{ action: 'fill', values: ['__op4pw', 'hunter2'] }] });
   await ticks(5);
-  assert.equal(c.card().text, 'That item has no passkey. Pick another.');
+  assert.equal(c.card().text, 'That item has no passkey.');
   assert.deepEqual(env.calls.executed[1].script, []);
   assert.equal(env.logs.some((l) => l.text.includes('hunter2')), false);
   noErrors(env);
 });
 
-test('create, switch on (default): capture fields replace the page; the fill gives one combined save', async () => {
+test('save: capture fields replace the page; the fill gives one combined save and the credential at once', async () => {
   const env = boot();
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
   assert.equal(c.card().state, 'pick-login');
   assert.equal(env.calls.popup, 1);
   env.sandbox.Agent.Fa(page());
@@ -126,7 +124,9 @@ test('create, switch on (default): capture fields replace the page; the fill giv
   assert.equal(arg.context, 'manual-save');
   assert.deepEqual(arg.collectedDocument.fields.map((f) => [f.htmlName, f.type, f.htmlName === 'passkey' ? 'PK' : f.value]),
     [['username', 'text', 'alice@example.com'], ['password', 'password', 'hunter2'], ['passkey', 'text', 'PK']]);
-  assert.deepEqual(c.card(), { state: 'create-saving', app7: true, title: '[Passkey] webauthn.io - Alice', combined: true });
+  await until(() => c.posted.some((m) => m.type === 'reply'), 'reply');
+  assert.ok(c.posted.find((m) => m.type === 'reply').credential);            // no Done: the site has the passkey
+  assert.deepEqual(c.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['pick-login', 'none']);
   assert.equal(JSON.stringify(c.posted).includes('hunter2'), false);
   assert.equal(env.logs.some((l) => l.text.includes('hunter2')), false);
   noErrors(env);
@@ -137,64 +137,31 @@ test('while a pick waits every fill is emptied, also one with page ops', async (
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
   env.sandbox.AgentHandlers.executeFillScript({ script: [['fill_by_opid', '__3', 'x']] });
   assert.deepEqual(env.calls.executed[0].script, {});
   assert.equal(c.card().state, 'pick-login');
   noErrors(env);
 });
 
-test('the switch: stored off saves passkey-only at once; the menu checkbox shows and stores it', async () => {
-  let env = boot({ 'op4pk.settings': { addToExisting: false } });
-  await ticks(10);
-  const box = env.calls.menus.find((m) => m.id === 'op4pk-add-existing');
-  assert.deepEqual([box.type, box.checked, box.parentId, box.title], ['checkbox', false, 'op4pk-root', 'Add new passkeys to an existing login']);
-  assert.ok(env.calls.menus.some((m) => m.id === 'op4pk-sep' && m.type === 'separator'));
-  let c = connect(env);
-  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
-  await until(() => env.calls.autosave.length === 1, 'passkey-only save');
-  assert.equal(env.calls.popup, 0);
-  assert.deepEqual(env.calls.autosave[0][0].collectedDocument.fields.map((f) => f.htmlName), ['username', 'passkey']);
-  env = boot();
-  await ticks(10);
-  assert.equal(env.calls.menus.find((m) => m.id === 'op4pk-add-existing').checked, true);
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-add-existing', checked: false });
-  assert.deepEqual(env.store.local['op4pk.settings'], { addToExisting: false });
-  c = connect(env);
-  await c.send({ type: 'request', id: 'c2', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c2', stage: 'prompt', title: '' });
-  await until(() => env.calls.autosave.length === 1, 'save after the switch');
-  assert.equal(env.calls.popup, 0);
-  noErrors(env);
-});
+/* ---------- capture provenance ---------- */
 
-/* ---------- review round 1: R1 (fills during the mismatch card), R2 (capture provenance) ---------- */
-
-test('mismatch card: capture fields stay reported, every fill is emptied, the pending choice is kept', async () => {
+test('a pick for another account is copied as picked, with no card in between', async () => {
   const env = boot();
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
   env.sandbox.Agent.Fa(page());
   env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [
     { action: 'fill', values: ['__op4us', 'bob'] }, { action: 'fill', values: ['__op4pw', 'pw-bob'] }] }] });
-  assert.equal(c.card().state, 'pick-mismatch');
-  const withPassword = page();
-  withPassword.pageDetails[0].fields.push({ opid: '__1', htmlName: 'password', type: 'password' });
-  env.sandbox.Agent.Fa(withPassword);
-  assert.deepEqual(env.calls.collected.at(-1).pageDetails[0].fields.map((f) => f.opid), ['__op4us', '__op4pw']);
-  env.sandbox.AgentHandlers.executeFillScript({ script: [{ action: 'fill', values: ['__1', 'typed'] }] });
-  assert.deepEqual(env.calls.executed.at(-1).script, {});
-  env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [
-    { action: 'fill', values: ['__op4us', 'eve'] }, { action: 'fill', values: ['__op4pw', 'pw-eve'] }] }] });
-  assert.deepEqual(env.calls.executed.at(-1).scripts[0].script, {});
-  assert.equal(c.card().state, 'pick-mismatch');
-  assert.equal(env.calls.autosave.length, 0);
-  await c.send({ type: 'approve', id: 'c1', stage: 'pick-confirm', choice: 'use' });
-  await until(() => env.calls.autosave.length === 1, 'save after Use this login');
+  assert.deepEqual(env.calls.executed.at(-1).scripts[0].script, {});         // nothing of the pick is typed
+  await until(() => env.calls.autosave.length === 1, 'save');
   assert.deepEqual(env.calls.autosave[0][0].collectedDocument.fields.slice(0, 2).map((f) => f.value), ['bob', 'pw-bob']);
+  await until(() => c.posted.some((m) => m.type === 'reply'), 'reply');
+  assert.deepEqual(c.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['pick-login', 'none']);
+  // The pick is over: a later fill of page fields is an ordinary fill again.
+  env.sandbox.AgentHandlers.executeFillScript({ script: [{ action: 'fill', values: ['__1', 'typed'] }] });
+  assert.deepEqual(env.calls.executed.at(-1).script, [{ action: 'fill', values: ['__1', 'typed'] }]);
+  assert.equal(JSON.stringify(c.posted).includes('pw-bob'), false);
   noErrors(env);
 });
 
@@ -203,7 +170,6 @@ test('a late fill of a cancelled pick on another tab is never taken by the next 
   await ticks(5);
   const a = connect(env);
   await a.send({ type: 'request', id: 'a', kind: 'create', options: CREATE });
-  await a.send({ type: 'approve', id: 'a', stage: 'prompt', title: '' });
   env.sandbox.Agent.Fa(page('old-document'));
   env.chrome.tabs.onActivated.fns[0]({ tabId: 6, windowId: 1 });
   assert.ok(a.posted.some((m) => m.type === 'reply' && m.error && m.error.name === 'NotAllowedError'));
@@ -214,8 +180,6 @@ test('a late fill of a cancelled pick on another tab is never taken by the next 
     onMessage: msg, onDisconnect: listener(), postMessage: (m) => posted.push(copy(m)),
   });
   msg.fns[0]({ type: 'request', id: 'b', kind: 'create', options: { ...CREATE, rp: { id: 'example.com', name: 'Example' } } });
-  await ticks(10);
-  msg.fns[0]({ type: 'approve', id: 'b', stage: 'prompt', title: '' });
   await ticks(10);
   env.sandbox.Agent.Fa({ pageDetails: [{ documentUUID: 'new-document', url: 'https://example.com/', fields: [] }] });
   env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'old-document', url: 'https://webauthn.io/', script: [
@@ -232,19 +196,21 @@ test('entries of different documents are never combined', async () => {
   await ticks(5);
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
   const two = page('d1');
   two.pageDetails.push({ documentUUID: 'd2', url: 'https://webauthn.io/frame', fields: [] });
   env.sandbox.Agent.Fa(two);
   env.sandbox.AgentHandlers.executeFillScript({ scripts: [
     { documentUUID: 'd1', script: [{ action: 'fill', values: ['__op4us', 'bob'] }] },
     { documentUUID: 'd2', script: [{ action: 'fill', values: ['__op4pw', 'pw2'] }] }] });
-  await until(() => env.calls.autosave.length === 1, 'save from d2 alone');
-  assert.deepEqual(env.calls.autosave[0][0].collectedDocument.fields.slice(0, 2).map((f) => f.value), ['alice@example.com', 'pw2']);
+  await until(() => env.calls.autosave.length === 1, 'save from d1 alone');
+  // d1's entry is taken as it is (a username, no password): a passkey-only save. d2's password is never merged in.
+  assert.deepEqual(env.calls.autosave[0][0].collectedDocument.fields.map((f) => (f.htmlName === 'passkey' ? 'PK' : f.value)), ['bob', 'PK']);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(env.calls.autosave.length, 1);
   noErrors(env);
 });
 
-/* ---------- fix round 1: I1 (promotion mid-fill), I2 (click before the settings read), I3 (storage errors) ---------- */
+/* ---------- I1 (promotion mid-fill), I3 (storage errors) ---------- */
 
 test('I1: a create promoted while a fill is processed takes no entry of the previous pick', async () => {
   const env = boot();
@@ -252,9 +218,7 @@ test('I1: a create promoted while a fill is processed takes no entry of the prev
   const a = connect(env), b = connect(env);
   const other = { ...CREATE, user: { id: 'BQYH', name: 'alice@example.com', displayName: 'Alice' } };
   await a.send({ type: 'request', id: 'A', kind: 'create', options: CREATE });
-  await a.send({ type: 'approve', id: 'A', stage: 'prompt', title: '' });
   await b.send({ type: 'request', id: 'B', kind: 'create', options: other });
-  await b.send({ type: 'approve', id: 'B', stage: 'prompt', title: '' });
   env.sandbox.Agent.Fa({ pageDetails: [
     { documentUUID: 'd1', url: 'https://webauthn.io/', fields: [] },
     { documentUUID: 'd2', url: 'https://webauthn.io/frame', fields: [] }] });
@@ -265,20 +229,6 @@ test('I1: a create promoted while a fill is processed takes no entry of the prev
   await new Promise((r) => setTimeout(r, 60));
   assert.equal(env.calls.autosave.length, 1);
   assert.equal(b.card().state, 'pick-login');
-  noErrors(env);
-});
-
-test('I2: a switch click that beats the settings read wins', async () => {
-  const env = boot({ 'op4pk.settings': { addToExisting: true } }, { asyncLocal: true });
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-add-existing', checked: false });
-  await new Promise((r) => setTimeout(r, 60));
-  assert.deepEqual(env.store.local['op4pk.settings'], { addToExisting: false });
-  assert.equal(env.calls.menus.find((m) => m.id === 'op4pk-add-existing').checked, false);
-  const c = connect(env);
-  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
-  await until(() => env.calls.autosave.length === 1, 'passkey-only save');
-  assert.equal(env.calls.popup, 0);
   noErrors(env);
 });
 

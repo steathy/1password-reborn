@@ -16,19 +16,16 @@
 
   function createManager(deps) {
     const A = deps.authenticator;
-    const index = deps.index;
     const recovery = deps.recovery;
     const showPopup = deps.showPopup;
     const autosave = deps.autosave;
     const isConnected = deps.isConnected;
-    const isNativeApp = deps.isNativeApp || (() => false);
     const getActive = deps.getActive;
     const log = deps.log || function () {};
     const isPasskeyValue = deps.isPasskeyValue || (() => false);   // fill-script.js's check, injected (this module stays pure)
     const setT = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
     const clearT = deps.clearTimeout || ((h) => clearTimeout(h));
     const now = deps.now || (() => Date.now());
-    const getSettings = deps.getSettings || (() => ({ addToExisting: true }));
 
     const pending = new Map();   // "portId:requestId" → record
     let owner = null;            // the single record (a sign-in, or a create picking a login) allowed to use the app popup
@@ -82,7 +79,7 @@
       if (msg.type === 'cancel') return retire(rec);     // page abort: the shim already rejected with signal.reason
       if (msg.type === 'decline') {
         if (msg.how === 'fallback') return fallback(rec);
-        return failReq(rec, rec.excluded ? 'InvalidStateError' : 'NotAllowedError', 'cancelled');
+        return failReq(rec, 'NotAllowedError', 'cancelled');
       }
       if (msg.type === 'approve') return approve(rec, msg);
     }
@@ -94,7 +91,7 @@
       const rec = {
         key: keyOf(port, msg.id), id: msg.id, port, kind: msg.kind, options,
         origin: sender.origin, tabId: tab.id, windowId: tab.windowId, url: tab.url || '',
-        stage: 'prompt', timer: null, excluded: false, allow: [], created: null, passkey: null, title: '', login: null,
+        stage: 'start', timer: null, allow: [], passkey: null, title: '',
       };
       let host;
       try { host = new URL(rec.origin).hostname; } catch (e) {
@@ -114,19 +111,11 @@
     }
 
     /* ---------- approvals: resolved by (port, id), then by the record's own stage ---------- */
+    // One approval is left: "New login" on the pick card. Everything else a request needs is the
+    // user's pick in the 1Password popup, which arrives through handleCapture or handleFillItem.
     function approve(rec, msg) {
       if (msg.stage !== rec.stage) return;
-      if (rec.kind === 'create') {
-        if (rec.stage === 'prompt' && !rec.excluded) return createStart(rec, msg.title);
-        if (rec.stage === 'pick-login' && msg.choice === 'again') return pickAgain(rec);
-        if ((rec.stage === 'pick-login' || rec.stage === 'pick-confirm') && msg.choice === 'new') return pickDone(rec, null);
-        if (rec.stage === 'pick-confirm' && msg.choice === 'again') return pickAgain(rec);
-        if (rec.stage === 'pick-confirm' && msg.choice === 'use') return pickDone(rec, rec.login);
-        if (rec.stage === 'saving') return createDone(rec);
-        return;
-      }
-      if (rec.kind === 'get' && rec.stage === 'prompt') return getOpenPopup(rec);
-      if (rec.kind === 'get' && rec.stage === 'confirm' && owner === rec) return getSign(rec);
+      if (rec.kind === 'create' && rec.stage === 'pick-login' && msg.choice === 'new') pickDone(rec, null);
     }
 
     /* ---------- create ---------- */
@@ -137,104 +126,79 @@
       return n ? '[Passkey] ' + siteName(rec) + ' - ' + n : '[Passkey] ' + siteName(rec);
     }
     // 1Password 7 titles a manual save from collectedDocument.title, and its brain cuts a title
-    // that contains the site's own name down to that word (InferBestTitle). So the default
-    // 1Password 7 title leaves the site out (the item's website field names it); an edited title
-    // goes as typed. 1Password 4 titles from displayTitle and ignores this key. Titles compare
-    // without line breaks and outer spaces: the card's input drops line breaks, the save trims.
+    // that contains the site's own name down to that word (InferBestTitle). So the title sent to
+    // 1Password 7 leaves the site out (the item's website field names it). 1Password 4 titles from
+    // displayTitle and ignores this key. Titles carry no line breaks and no outer spaces.
     const normTitle = (s) => String(s).replace(/[\r\n]+/g, '').trim();
     function app7Title(rec) {
-      if (normTitle(rec.title) !== normTitle(defaultTitle(rec))) return rec.title;
       const n = normTitle(userLabel(rec));
       return n ? '[Passkey] ' + n : '[Passkey]';
     }
+    // A save takes the popup slot like a sign-in: the adapter reports Reborn's capture fields for
+    // the owner's page, and the app's fill of the picked login comes back through handleCapture.
+    // The passkey is generated only after the pick, so an abandoned pick leaves no key behind.
+    // A site's excludeCredentials list is not consulted: the user decides what to save.
     function startCreate(rec) {
-      const excluded = new Set((rec.options.excludeCredentials || [])
-        .filter((c) => c && typeof c.id === 'string').map((c) => normId(c.id)));
-      if (excluded.size && index.get(rec.rpId).some((e) => excluded.has(idOfEntry(e)))) {
-        rec.excluded = true;
-        return card(rec, 'create-excluded', { site: siteName(rec) });
-      }
-      card(rec, 'create-prompt', { site: siteName(rec), name: userLabel(rec), defaultTitle: defaultTitle(rec) });
-    }
-    function createStart(rec, title) {
-      rec.title = (typeof title === 'string' && title.trim()) ? title.trim() : defaultTitle(rec);
-      if (!addToExisting()) return createSave(rec, null);
+      rec.title = normTitle(defaultTitle(rec));
       openPick(rec);
     }
-    function addToExisting() {
-      try { const s = getSettings(); return !(s && s.addToExisting === false); } catch (e) { return true; }
-    }
-    // "Add to an existing login" (docs/1pass7-design.md 8): the request takes the popup slot like a
-    // sign-in; the adapter reports Reborn's capture fields for the owner's page, and the app's fill
-    // of the picked login comes back through handleCapture. The passkey is generated only after the
-    // pick, so an abandoned pick leaves no key behind.
     function openPick(rec) {
       if (owner && owner !== rec) { rec.stage = 'busy'; return card(rec, 'busy'); }
-      if (!isConnected()) { rec.stage = 'prompt'; return card(rec, 'not-connected'); }
+      if (!isConnected()) { rec.stage = 'start'; return card(rec, 'not-connected'); }
       owner = rec;
-      showPick(rec);
-    }
-    function showPick(rec) {
-      rec.pick = ++pickSeq;                              // ties the adapter's capture to this attempt (review round 1, R2)
+      rec.pick = ++pickSeq;                              // ties the adapter's capture to this pick
       rec.stage = 'pick-login';
-      rec.login = null;
       card(rec, 'pick-login', { site: siteName(rec), name: userLabel(rec) });
       showPopup(rec.url);
     }
-    function pickAgain(rec) { if (owner === rec) showPick(rec); }
     function pickDone(rec, login) {
       if (owner === rec) owner = null;
-      rec.login = null;
       createSave(rec, login);
       promote();
     }
     function accountName(rec) { const u = rec.options.user || {}; return String(u.name || u.displayName || '').trim(); }
-    // The app's fill of the picked login (spec 9). True while a pick waits: the adapter empties
-    // every fill then, so nothing is typed into the page. Card messages never carry the password.
+    // The app's fill of the picked item. True while a pick waits: the adapter empties every fill
+    // then, so nothing is typed into the page. Card messages never carry the password.
+    // The pick is used as it is: its username (else the passkey's account name), and its password
+    // unless that is empty or passkey JSON (an older passkey item), which gives a passkey-only login.
     function handleCapture(found) {
       const rec = owner;
       if (!rec || rec.kind !== 'create' || rec.stage !== 'pick-login') return false;
       if (!ownerIsActive()) return true;                                    // a fill for another tab: nothing taken
       const f = found && typeof found === 'object' ? found : {};
-      const password = typeof f.password === 'string' ? f.password : '';
+      const picked = typeof f.password === 'string' ? f.password : '';
       const username = typeof f.username === 'string' ? f.username.trim() : '';
       const passkeys = Array.isArray(f.passkeys) ? f.passkeys : [];
-      if (!password && !username && !passkeys.length) return true;         // nothing for us (another frame): keep waiting
-      if (passkeys.length) { card(rec, 'pick-notice', { text: 'That item is a passkey, not a login with a password.' }); return true; }
-      if (!password) { card(rec, 'pick-notice', { text: 'That login has no password.' }); return true; }
-      const account = accountName(rec);
-      rec.login = { username: username || account, password };
-      if (username && account && username.toLowerCase() !== account.toLowerCase()) {
-        rec.stage = 'pick-confirm';
-        card(rec, 'pick-mismatch', { login: username, account });
-        return true;
-      }
-      pickDone(rec, rec.login);
+      if (!picked && !username && !passkeys.length) return true;           // nothing for us (another frame): keep waiting
+      const password = picked && !isPasskeyValue(picked) ? picked : '';
+      pickDone(rec, { username: username || accountName(rec), password });
       return true;
     }
     async function createSave(rec, login) {
-      if (!isConnected()) return card(rec, 'not-connected');   // the app went away while the prompt was open
+      if (!isConnected()) { rec.stage = 'start'; return card(rec, 'not-connected'); }   // the app went away during the pick
       rec.stage = 'saving';
       let made;
       try { made = await A.makeCredential(rec.options, rec.origin, { uv: true }); }
       catch (e) { return failReq(rec, e.name || 'NotAllowedError', e.message); }
       if (!pending.has(rec.key)) return;                 // retired while generating
       const payload = buildSavePayload(rec, made, login);
-      // Spec create step 4: the recovery copy is stored BEFORE anything is sent. The adapter's
-      // put is asynchronous and rejects on a storage error; neither the app save nor Done may
-      // proceed until it has succeeded.
+      // The recovery copy is stored BEFORE anything is sent. The adapter's put is asynchronous and
+      // rejects on a storage error; neither the app save nor the reply may proceed until it has succeeded.
       try { await recovery.put(made.credentialId, payload); }
       catch (e) {
         log('error', 'recovery store failed', e);
         if (pending.has(rec.key)) failReq(rec, 'NotAllowedError', 'could not store the passkey');
         return;
       }
-      if (!pending.has(rec.key)) return;                 // retired while storing: no app save; the stored copy stays until discarded
-      if (!isConnected()) return card(rec, 'not-connected');   // the app went away meanwhile: the copy stays, Done stays inert
-      rec.created = made;                                // only now can Done succeed
+      // From here on the copy is kept only if the site gets this passkey.
+      const dropCopy = () => recovery.remove(made.credentialId).catch((e) => log('warn', 'recovery remove failed', e));
+      if (!pending.has(rec.key)) { dropCopy(); return; }                   // retired while storing
+      if (!isConnected()) { dropCopy(); rec.stage = 'start'; return card(rec, 'not-connected'); }   // the app went away meanwhile
       autosave(payload.login, payload.collectedDocument, payload.url);
-      // 1Password 7 preselects Update existing and names the item after the site; a combined save also gets the old-login note.
-      card(rec, 'create-saving', Object.assign(isNativeApp() ? { app7: true, title: rec.title } : {}, login ? { combined: true } : {}));
+      // The app sends no acknowledgement and this edition does not wait for one: the site gets the
+      // passkey now. If the user cancels 1Password's save window, the recovery copy (Re-save) is
+      // what is left of it.
+      reply(rec, { credential: registrationJson(made, rec.options) });
     }
     function buildSavePayload(rec, made, login) {
       const p = made.passkey;
@@ -244,7 +208,7 @@
         htmlID: name, htmlName: name, type, value, 'label-tag': name });
       const fields = [{ name: 'username', value: userName, type: 'T', designation: 'username' }];
       const pageFields = [pageField(0, 'username', 'text', userName)];
-      if (login) {                                       // the copied login: the field named password becomes the item's password
+      if (login && login.password) {                     // a picked password: the field named password becomes the item's password
         fields.push({ name: 'password', value: login.password, type: 'P', designation: 'password' });
         pageFields.push(pageField(1, 'password', 'password', login.password));
       }
@@ -264,12 +228,6 @@
         collectedDocument: { documentUUID: 'op4pk-' + rec.id, url: rec.url, displayTitle: rec.title, title: app7Title(rec), forms: {},
           fields: pageFields, collectedTimestamp: now() },
       };
-    }
-    function createDone(rec) {
-      const made = rec.created;
-      if (!made) return;                                 // Done cannot precede generation and the recovery write
-      index.add(rec.rpId, { credentialId: made.credentialId, userName: made.passkey.userName, seenAt: now() });
-      reply(rec, { credential: registrationJson(made, rec.options) });
     }
     function registrationJson(made, options) {
       const id = A.b64url.encode(A.bytesFromUuid(made.credentialId));
@@ -292,13 +250,11 @@
     function startGet(rec) {
       rec.allow = (rec.options.allowCredentials || [])
         .filter((c) => c && typeof c.id === 'string').map((c) => normId(c.id));
-      const match = index.get(rec.rpId).some((e) => !rec.allow.length || rec.allow.includes(idOfEntry(e)));
-      if (match) return getOpenPopup(rec);          // positive match: the popup is the prompt
-      card(rec, 'get-prompt', { site: rec.rpId }); // miss or partial index: ask first
+      getOpenPopup(rec);                             // the popup is the prompt
     }
     function getOpenPopup(rec) {
       if (owner && owner !== rec) { rec.stage = 'busy'; return card(rec, 'busy'); }
-      if (!isConnected()) { rec.stage = 'prompt'; return card(rec, 'not-connected'); }   // the app went away after intake
+      if (!isConnected()) { rec.stage = 'start'; return card(rec, 'not-connected'); }   // the app went away after intake
       owner = rec;
       rec.stage = 'waiting';
       card(rec, 'waiting');
@@ -337,11 +293,11 @@
       const item = payload && payload.item;
       const found = stripPasskeys(item && item.secureContents);           // ALWAYS strip before the engine sees the item
       if (!found.length) {
-        if (owner && owner.stage === 'waiting') card(owner, 'notice', { text: 'That item has no passkey. Pick another.' });
+        if (owner && owner.stage === 'waiting') card(owner, 'notice', { text: 'That item has no passkey.' });
         return false;                                                   // the engine fills as usual
       }
-      const live = owner && (owner.stage === 'waiting' || owner.stage === 'confirm') ? owner : null;
-      processPasskeyField(found[0], item.uuid, live).catch((e) => log('error', 'passkey field processing failed', e));
+      const live = owner && (owner.stage === 'waiting' || owner.stage === 'signing') ? owner : null;
+      processPasskeyField(found[0], live).catch((e) => log('error', 'passkey field processing failed', e));
       return Boolean(live);                                               // consumed only while a live owner exists
     }
     // Removes every passkey from an item in place and returns the removed values, top-level fields
@@ -368,23 +324,20 @@
       }
       list.length = w;
     }
-    async function processPasskeyField(value, itemUuid, rec) {
+    async function processPasskeyField(value, rec) {
       let passkey = null;
       try { passkey = await A.decodePasskeyField(value); }
       catch (e) { log('warn', 'unreadable passkey field', e && e.message); }
-      if (passkey) {
-        index.add(passkey.rpId, { credentialId: passkey.credentialId, userName: passkey.userName, itemUuid, seenAt: now() });
-        recovery.remove(passkey.credentialId).catch((e) => log('warn', 'recovery remove failed', e));   // proven to be in the vault
-      }
-      if (!rec || owner !== rec || rec.stage !== 'waiting') return;       // no owner, retired, or already confirming
+      if (passkey) recovery.remove(passkey.credentialId).catch((e) => log('warn', 'recovery remove failed', e));   // proven to be in the vault
+      if (!rec || owner !== rec || rec.stage !== 'waiting') return;       // no owner, retired, or already signing
       if (!passkey) return card(rec, 'notice', { text: 'That passkey could not be read.' });
       const allowed = !rec.allow.length || rec.allow.includes(idOfEntry(passkey));
       if (!ownerIsActive() || passkey.rpId !== rec.rpId || !allowed) {
         return card(rec, 'notice', { text: 'That passkey is for another site or account.' });
       }
       rec.passkey = passkey;
-      rec.stage = 'confirm';                                              // signing waits for a trusted Sign in
-      card(rec, 'confirm', { site: rec.rpId, account: passkey.userName || passkey.userDisplayName || '' });
+      rec.stage = 'signing';                                              // the pick is the approval: sign at once
+      return getSign(rec);
     }
     async function getSign(rec) {
       let got;
