@@ -20,25 +20,14 @@ async function until(pred, label) {
   throw new Error('timed out waiting for ' + label);
 }
 
-function boot(local, opts = {}) {
+function boot(local) {
   const logs = [];
   const rec = (level) => (...a) => logs.push({ level, text: a.map(String).join(' ') });
-  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [] };
+  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [], storage: [] };
   const store = { local: copy(local || {}), session: {} };
-  // opts.asyncLocal: local.get answers later with a snapshot taken at call time (like chrome.storage);
-  // opts.localError: local.get/set callbacks run with chrome.runtime.lastError set.
   const area = (name) => ({
-    get: (k, cb) => {
-      const snap = copy({ [k]: store[name][k] });
-      const run = () => { if (name === 'local' && opts.localError) chrome.runtime.lastError = { message: 'boom-read' }; try { cb(opts.localError && name === 'local' ? {} : snap); } finally { chrome.runtime.lastError = undefined; } };
-      if (name === 'local' && opts.asyncLocal) setTimeout(run, 5); else run();
-    },
-    set: (o, cb) => {
-      Object.assign(store[name], copy(o));
-      if (!cb) return;
-      if (name === 'local' && opts.localError) chrome.runtime.lastError = { message: 'boom-write' };
-      try { cb(); } finally { chrome.runtime.lastError = undefined; }
-    },
+    get: (k, cb) => { calls.storage.push([name, 'get', k]); cb(copy({ [k]: store[name][k] })); },
+    set: (o, cb) => { calls.storage.push([name, 'set', Object.keys(o).join()]); Object.assign(store[name], copy(o)); if (cb) cb(); },
   });
   const chrome = {
     runtime: { lastError: undefined, onConnect: listener() },
@@ -48,7 +37,7 @@ function boot(local, opts = {}) {
     contextMenus: {
       create: (o, cb) => { calls.menus.push(copy(o)); if (cb) cb(); },
       remove: (id, cb) => { calls.menus = []; if (cb) cb(); },
-      removeAll: (cb) => { if (cb) cb(); },
+      removeAll: (cb) => { calls.menus = []; if (cb) cb(); },
       onClicked: listener(),
     },
   };
@@ -210,7 +199,7 @@ test('entries of different documents are never combined', async () => {
   noErrors(env);
 });
 
-/* ---------- I1 (promotion mid-fill), I3 (storage errors) ---------- */
+/* ---------- promotion mid-fill ---------- */
 
 test('I1: a create promoted while a fill is processed takes no entry of the previous pick', async () => {
   const env = boot();
@@ -232,13 +221,50 @@ test('I1: a create promoted while a fill is processed takes no entry of the prev
   noErrors(env);
 });
 
-test('I3: settings storage errors are logged once each; an unreadable value counts as on', async () => {
-  const env = boot({ 'op4pk.settings': { addToExisting: false } }, { localError: true });
+/* ---------- menu and storage ---------- */
+
+test('menu: nothing while no passkey is unsaved; Re-save and Discard all while a copy is held', async () => {
+  const env = boot();
   await ticks(10);
-  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-read')).length, 1);
-  assert.equal(env.calls.menus.find((m) => m.id === 'op4pk-add-existing').checked, true);
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-add-existing', checked: false });
-  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-write')).length, 1);
+  assert.deepEqual(env.calls.menus, []);                                      // no Reborn menu at all
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+  await until(() => env.calls.menus.length === 3, 'menu with a copy');
+  const id = Object.keys(env.store.session['op4pk.recovery'])[0];
+  assert.deepEqual(env.calls.menus.map((m) => [m.id, m.parentId, m.title, m.type]), [
+    ['op4pk-root', undefined, '1Password passkeys', undefined],
+    ['op4pk-resave:' + id, 'op4pk-root', 'Re-save [Passkey] webauthn.io - Alice', undefined],
+    ['op4pk-discard', 'op4pk-root', 'Discard all', undefined],
+  ]);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-resave:' + id });
+  await until(() => env.calls.autosave.length === 2, 're-save');
+  assert.deepEqual(env.calls.autosave[1], env.calls.autosave[0]);
+  env.chrome.contextMenus.removeAll();                                        // the engine reconnects and wipes the menus
+  await until(() => env.calls.menus.length === 3, 'menu rebuilt');
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-discard' });
+  await until(() => Object.keys(env.store.session['op4pk.recovery']).length === 0, 'copies discarded');
+  await ticks(10);
+  assert.deepEqual(env.calls.menus, []);                                      // gone again with the last copy
+  noErrors(env);
+});
+
+test('storage: the index and settings keys of the other editions are never read or written', async () => {
+  const other = { 'op4pk.index': { 'webauthn.io': [{ credentialId: 'x', userName: 'a', seenAt: 1 }] }, 'op4pk.settings': { addToExisting: false } };
+  const env = boot(other);
+  await ticks(10);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  assert.equal(c.card().state, 'pick-login');                                 // a stored "off" switch changes nothing
+  assert.equal(env.calls.popup, 1);
+  await c.send({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });
+  await until(() => c.posted.some((m) => m.type === 'reply'), 'reply');
+  const g = connect(env);
+  await g.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.equal(g.card().state, 'waiting');
+  assert.deepEqual(env.calls.storage.filter((x) => x[0] === 'local'), []);
+  assert.deepEqual(env.store.local, other);
+  assert.ok(env.calls.storage.some((x) => x[0] === 'session' && x[1] === 'set' && x[2] === 'op4pk.recovery'));
   noErrors(env);
 });
 
