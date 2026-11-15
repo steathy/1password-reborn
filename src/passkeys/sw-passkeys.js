@@ -43,9 +43,36 @@
     activeKnown();
   });
 
-  // Requests are handled only once the focused window's active tab is known, so the first request
-  // after a worker start is judged against the real tab (the owner's fill check, promotion).
-  const ready = activeReady;
+  /* ---------- options: chrome.storage.local['op4pk.plain'] = { updateLogin, askSignIn, style } ---------- */
+  // "Update login" on the save card and "Sign in" before the popup are off, and the card style is
+  // Reborn, until the user says otherwise in the menu. The key belongs to this edition alone: the
+  // other editions' keys (op4pk.settings, op4pk.index) are never read, written or deleted.
+  const OPTIONS_KEY = 'op4pk.plain';
+  const STYLES = RM.STYLES;
+  const options = { updateLogin: false, askSignIn: false, style: STYLES[0] };
+  const touched = new Set();                          // options clicked before the stored values were read: the click wins
+  const optionsReady = new Promise((resolve) =>
+    chrome.storage.local.get(OPTIONS_KEY, (r) => {
+      if (chrome.runtime.lastError) console.warn(TAG, 'options unreadable, the defaults apply:', chrome.runtime.lastError.message || chrome.runtime.lastError);
+      const s = (r && r[OPTIONS_KEY]) || {};
+      if (!touched.has('updateLogin') && typeof s.updateLogin === 'boolean') options.updateLogin = s.updateLogin;
+      if (!touched.has('askSignIn') && typeof s.askSignIn === 'boolean') options.askSignIn = s.askSignIn;
+      if (!touched.has('style') && STYLES.includes(s.style)) options.style = s.style;
+      resolve();
+    }));
+  // The new value applies at once; it is written after the stored values were read, so that a
+  // click which beat the read does not write the defaults over the other stored options.
+  function setOption(name, value) {
+    touched.add(name);
+    options[name] = value;
+    optionsReady.then(() => chrome.storage.local.set({ [OPTIONS_KEY]: options }, () => {
+      if (chrome.runtime.lastError) console.warn(TAG, 'options not saved, the choice is lost on restart:', chrome.runtime.lastError.message || chrome.runtime.lastError);
+    }));
+  }
+  // Requests are handled only once the options and the focused window's active tab are known, so
+  // the first request after a worker start is judged against the real tab (the owner's fill
+  // check, promotion) and shown the way the user chose.
+  const ready = Promise.all([activeReady, optionsReady]);
 
   /* ---------- recovery store: chrome.storage.session['op4pk.recovery'] (cleared when the browser closes, or when the extension is updated, reloaded or disabled) ---------- */
   // Every operation is a read-modify-write of one object, so they run one at a time through a
@@ -97,6 +124,7 @@
     // that flag to true unconditionally at startup, connected or not.
     isConnected: () => Agent.isConnected() === true,
     getActive,
+    getOptions: () => options,
     isPasskeyValue: FS.isPasskeyValue,
     log: (level, ...args) => (level === 'error' ? console.error : console.warn)(TAG, ...args),
   });
@@ -222,27 +250,43 @@
   });
   chrome.tabs.onRemoved.addListener((tabId) => manager.onTabRemoved(tabId));
 
-  /* ---------- context menu: "1Password passkeys" → Re-save <title> / Discard all, only while a recovery copy is held ---------- */
+  /* ---------- context menu: "1Password passkeys" → the two options, the card style, and Re-save <title> / Discard all while a recovery copy is held ---------- */
   const ROOT_ID = 'op4pk-root';
   const CONTEXTS = ['action'];
+  const STYLE_TITLES = { reborn: 'Card style: Reborn', op4: 'Card style: 1Password 4', op7: 'Card style: 1Password 7' };
   let rebuilding = Promise.resolve();
   function rebuildMenus() {
     rebuilding = rebuilding.then(async () => {
+      await optionsReady;
       const all = await sessionGet();
       await new Promise((resolve) => chrome.contextMenus.remove(ROOT_ID, () => { void chrome.runtime.lastError; resolve(); }));
-      const ids = Object.keys(all);
-      if (!ids.length) return;                         // nothing unsaved: no menu at all
       const done = () => void chrome.runtime.lastError;
+      const item = (o) => chrome.contextMenus.create(Object.assign({ parentId: ROOT_ID, contexts: CONTEXTS }, o), done);
       chrome.contextMenus.create({ id: ROOT_ID, title: '1Password passkeys', contexts: CONTEXTS }, done);
-      for (const id of ids) {
-        chrome.contextMenus.create({ id: 'op4pk-resave:' + id, parentId: ROOT_ID, title: 'Re-save ' + all[id].title, contexts: CONTEXTS }, done);
-      }
-      chrome.contextMenus.create({ id: 'op4pk-discard', parentId: ROOT_ID, title: 'Discard all', contexts: CONTEXTS }, done);
+      item({ id: 'op4pk-opt:updateLogin', type: 'checkbox', checked: options.updateLogin, title: 'Show "Update login" when saving' });
+      item({ id: 'op4pk-opt:askSignIn', type: 'checkbox', checked: options.askSignIn, title: 'Show "Sign in" when authenticating' });
+      item({ id: 'op4pk-sep-style', type: 'separator' });
+      for (const s of STYLES) item({ id: 'op4pk-style:' + s, type: 'radio', checked: options.style === s, title: STYLE_TITLES[s] });
+      const ids = Object.keys(all);
+      if (!ids.length) return;                         // nothing unsaved: only the options
+      item({ id: 'op4pk-sep-copies', type: 'separator' });
+      for (const id of ids) item({ id: 'op4pk-resave:' + id, title: 'Re-save ' + all[id].title });
+      item({ id: 'op4pk-discard', title: 'Discard all' });
     }).catch((e) => console.warn(TAG, 'menu rebuild failed', e));
     return rebuilding;
   }
   chrome.contextMenus.onClicked.addListener((info) => {
     const id = String(info.menuItemId);
+    if (id.startsWith('op4pk-opt:')) {
+      const name = id.slice('op4pk-opt:'.length);
+      if (name === 'updateLogin' || name === 'askSignIn') setOption(name, info.checked === true);
+      return;
+    }
+    if (id.startsWith('op4pk-style:')) {
+      const style = id.slice('op4pk-style:'.length);
+      if (STYLES.includes(style)) setOption('style', style);
+      return;
+    }
     if (id === 'op4pk-discard') { recovery.clear().catch(() => {}); return; }   // failures are logged by mutateRecovery
     if (!id.startsWith('op4pk-resave:')) return;
     sessionGet().then((all) => {
