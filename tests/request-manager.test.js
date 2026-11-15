@@ -63,6 +63,7 @@ function harness(opts = {}) {
     autosave: (login, doc, url) => { if (opts.autosaveThrows) throw new Error('engine autosave failed'); calls.autosave.push({ login, doc, url }); },
     isConnected: () => connected,
     isPasskeyValue: FS.isPasskeyValue,
+    getOptions: () => opts.options || {},
     getActive: () => active,
     setTimeout: (fn, ms) => { const h = { fn, ms, cleared: false }; timers.push(h); return h; },
     clearTimeout: (h) => { if (h) h.cleared = true; },
@@ -284,7 +285,7 @@ test('intake: invalid rpId, unknown kind, not connected, supersede on the same t
   p.emit({ type: 'request', id: 'c2', kind: 'create', options: createOptions({ timeout: 10000000 }) });
   assert.equal(p.sent.find((m) => m.type === 'reply' && m.id === 'c1').error.message, 'superseded by a newer request');
   assert.deepEqual(h.m.getState().pending.map((r) => [r.id, r.stage]), [['c2', 'offer']]);   // the newer request replaced it
-  assert.equal(h.timers[1].ms, 600000);
+  assert.equal(h.timers[1].ms, 120000);                                    // never longer than two minutes
   p.emit({ type: 'request', id: 'c3', kind: 'create', options: createOptions() });
   assert.equal(h.timers[2].ms, 120000);
   h.timers[2].fn();
@@ -852,4 +853,100 @@ test('only the active tab of the focused window opens the popup: a sign-in elsew
   h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
   assert.equal(bg.state(), 'pick-login');
   assert.deepEqual(h.calls.showPopup, [PAGE]);
+});
+
+/* ---------- options, the request clock and the card style ---------- */
+
+test('options: the offer card says when Update login is shown; with "Sign in" shown a sign-in asks first', async () => {
+  // Update login shown
+  let h = harness({ options: { updateLogin: true } }); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+  assert.deepEqual(p.last('card').card, { state: 'offer', site: 'Example', name: 'Alice', update: true });
+  // Sign in shown: no popup until the click
+  const v = await vaultItem();
+  h = harness({ options: { askSignIn: true } }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  assert.deepEqual(p.last('card').card, { state: 'ask', site: 'example.com' });
+  assert.deepEqual(h.calls.showPopup, []);
+  assert.equal(h.m.getState().owner, null);
+  assert.deepEqual(h.m.getState().pending, [{ id: 'g1', kind: 'get', stage: 'ask', tabId: 1 }]);
+  assert.equal(h.m.handleFillItem({ item: v.copy() }), false);              // no sign-in waits yet: an ordinary fill
+  for (const part of [{ stage: 'ask' }, { stage: 'ask', choice: 'new' }, { stage: 'waiting', choice: 'go' }, { stage: 'offer', choice: 'go' }]) {
+    p.emit({ type: 'approve', id: 'g1', ...part });
+  }
+  assert.deepEqual(h.calls.showPopup, []);
+  p.emit({ type: 'approve', id: 'g1', stage: 'ask', choice: 'go' });         // Sign in
+  assert.equal(p.state(), 'waiting');
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
+  assert.equal(h.m.handleFillItem({ item: v.copy() }), true);
+  await until(() => p.last('reply'), 'assertion');
+  assert.ok(p.last('reply').credential);
+  assert.deepEqual(p.cards(), ['ask', 'waiting', 'none']);                   // the pick signs in: no second question
+  // the exits of the ask card; Sign in from a tab that is not the visible one waits
+  p.emit({ type: 'request', id: 'g2', kind: 'get', options: getOptions() });
+  p.emit({ type: 'decline', id: 'g2', how: 'fallback' });
+  assert.deepEqual(p.last('reply'), { type: 'reply', id: 'g2', fallback: true });
+  const bg = makePort(2, { id: 2, windowId: 10 }); h.m.onConnect(bg);
+  bg.emit({ type: 'request', id: 'g3', kind: 'get', options: getOptions() });
+  assert.equal(bg.state(), 'ask');
+  bg.emit({ type: 'approve', id: 'g3', stage: 'ask', choice: 'go' });
+  assert.equal(bg.state(), 'busy');
+  assert.equal(h.calls.showPopup.length, 1);
+  h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+  assert.equal(bg.state(), 'waiting');
+  assert.equal(h.calls.showPopup.length, 2);
+  // asked while 1Password is not connected
+  h = harness({ options: { askSignIn: true }, connected: false }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g4', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'not-connected');
+  // connected at the request, gone at the click
+  h = harness({ options: { askSignIn: true } }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g5', kind: 'get', options: getOptions() });
+  h.setConnected(false);
+  p.emit({ type: 'approve', id: 'g5', stage: 'ask', choice: 'go' });
+  assert.equal(p.state(), 'not-connected');
+  assert.deepEqual(h.calls.showPopup, []);
+});
+
+test('every card carries the request clock and the card style; a request never lives longer than 120 seconds', async () => {
+  const T0 = 1700000000000;                                                // the harness clock
+  let h = harness(); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions({ timeout: 60000 }) });
+  let msg = p.last('card');
+  assert.deepEqual(msg.clock, { expires: T0 + 60000, total: 60000 });
+  assert.equal(msg.style, 'reborn');
+  assert.equal(h.timers[0].ms, 60000);
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'pick' });
+  assert.equal(p.state(), 'pick-login');
+  assert.deepEqual(p.last('card').clock, { expires: T0 + 60000, total: 60000 });   // the same clock on the next card
+  p.emit({ type: 'decline', id: 'c1', how: 'cancel' });
+  msg = p.last('card');
+  assert.deepEqual([msg.card.state, msg.clock, msg.style], ['none', undefined, undefined]);
+  for (const [timeout, total] of [[undefined, 120000], [5000, 30000], [600000, 120000], [121000, 120000], [90000, 90000]]) {
+    h = harness({ options: { style: 'op7' } }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions(timeout === undefined ? {} : { timeout }) });
+    assert.deepEqual(p.last('card').clock, { expires: T0 + total, total }, String(timeout));
+    assert.equal(p.last('card').style, 'op7', String(timeout));
+    assert.equal(h.timers[0].ms, total, String(timeout));
+  }
+  for (const [style, want] of [['op4', 'op4'], ['reborn', 'reborn'], ['neon', 'reborn'], [undefined, 'reborn']]) {
+    h = harness({ options: { style } }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+    assert.equal(p.last('card').style, want, String(style));
+  }
+  // the status cards carry them too
+  h = harness({ connected: false, options: { style: 'op4' } }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  assert.deepEqual([p.state(), p.last('card').clock, p.last('card').style], ['not-connected', { expires: T0 + 120000, total: 120000 }, 'op4']);
+  // options that cannot be read, or none at all, count as the defaults
+  for (const getOpts of [undefined, () => { throw new Error('storage'); }, () => null]) {
+    const m = createManager({ authenticator: A, recovery: { async put() {}, async remove() {} }, showPopup: () => {}, autosave: () => {},
+      isConnected: () => true, getActive: () => ({ tabId: 1, windowId: 10 }), setTimeout: () => ({}), clearTimeout: () => {}, getOptions: getOpts });
+    const q = makePort(2, { id: 1, windowId: 10 }); m.onConnect(q);
+    q.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+    assert.deepEqual(q.last('card').card, { state: 'offer', site: 'Example', name: 'Alice' }, String(getOpts));
+    assert.equal(q.last('card').style, 'reborn', String(getOpts));
+    q.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+    assert.equal(q.state(), 'waiting', String(getOpts));
+  }
 });

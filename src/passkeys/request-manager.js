@@ -11,7 +11,8 @@
 
   const DEFAULT_TIMEOUT_MS = 120000;
   const MIN_TIMEOUT_MS = 30000;
-  const MAX_TIMEOUT_MS = 600000;
+  const MAX_TIMEOUT_MS = 120000;                        // a request, and with it its card, never lives longer than two minutes
+  const STYLES = ['reborn', 'op4', 'op7'];             // the card styles; the first is the default
   const WINDOW_ID_NONE = -1;
 
   function createManager(deps) {
@@ -26,6 +27,7 @@
     const setT = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
     const clearT = deps.clearTimeout || ((h) => clearTimeout(h));
     const now = deps.now || (() => Date.now());
+    const getOptions = deps.getOptions || (() => ({}));
 
     const pending = new Map();   // "portId:requestId" → record
     let owner = null;            // the single record (a sign-in, or a create picking a login) allowed to use the app popup
@@ -42,8 +44,20 @@
     function send(port, msg) {
       try { port.postMessage(msg); } catch (e) { log('warn', 'port send failed', e && e.message); }
     }
+    // The user's options, which the adapter stores: Update login on the save card, Sign in before
+    // the popup, and the card style. Anything missing or unreadable counts as the default.
+    function userOptions() {
+      let o = null;
+      try { o = getOptions(); } catch (e) { log('warn', 'options unreadable', e && e.message); }
+      o = o && typeof o === 'object' ? o : {};
+      return { updateLogin: o.updateLogin === true, askSignIn: o.askSignIn === true, style: STYLES.includes(o.style) ? o.style : STYLES[0] };
+    }
+    // Every card but 'none' carries the request's clock (the card counts it down) and the card
+    // style of the moment, beside the card's own content.
     function card(rec, state, data) {
-      send(rec.port, { type: 'card', id: rec.id, card: Object.assign({ state }, data || {}) });
+      const msg = { type: 'card', id: rec.id, card: Object.assign({ state }, data || {}) };
+      if (state !== 'none') { msg.clock = { expires: rec.expires, total: rec.total }; msg.style = userOptions().style; }
+      send(rec.port, msg);
     }
     // Retire ONE request. Only when it is the popup owner does the owner slot change.
     function retire(rec) {
@@ -109,17 +123,21 @@
         if (other.port === port && other.tabId === rec.tabId) failReq(other, 'NotAllowedError', 'superseded by a newer request');
       }
       pending.set(rec.key, rec);
-      rec.timer = setT(() => failReq(rec, 'NotAllowedError', 'timed out'), clampTimeout(options.timeout));
+      rec.total = clampTimeout(options.timeout);
+      rec.expires = now() + rec.total;
+      rec.timer = setT(() => failReq(rec, 'NotAllowedError', 'timed out'), rec.total);
       if (!isConnected()) return card(rec, 'not-connected');
       return rec.kind === 'create' ? startCreate(rec) : startGet(rec);
     }
 
     /* ---------- approvals: resolved by (port, id), then by the record's own stage ---------- */
-    // Only a save has approvals: New login and Update login on its offer card, and New login on
-    // the pick card. A sign-in needs none: the user's pick in the 1Password popup is its approval
+    // A save has three: the save button and Update login on its offer card, and the save button
+    // on the pick card. A sign-in has one, and only when "Sign in" is shown first: Sign in on the
+    // ask card. Signing itself needs none: the user's pick in the 1Password popup is its approval
     // and arrives through handleFillItem.
     function approve(rec, msg) {
-      if (msg.stage !== rec.stage || rec.kind !== 'create') return;
+      if (msg.stage !== rec.stage) return;
+      if (rec.kind === 'get') { if (rec.stage === 'ask' && msg.choice === 'go') getOpenPopup(rec); return; }
       if (rec.stage === 'offer' && msg.choice === 'new') { createSave(rec, null); return; }
       if (rec.stage === 'offer' && msg.choice === 'pick') return openPick(rec);
       if (rec.stage === 'pick-login' && msg.choice === 'new') pickDone(rec, null);
@@ -141,13 +159,14 @@
       const n = normTitle(userLabel(rec));
       return n ? '[Passkey] ' + n : '[Passkey]';
     }
-    // A save starts with its offer card and nothing opens by itself: New login saves a passkey-only
-    // login at once, Update login opens the pick. A site's excludeCredentials list is not
-    // consulted: the user decides what to save.
+    // A save starts with its offer card and nothing opens by itself: the save button sends a
+    // passkey-only save at once (1Password's own window then offers Create New and Update
+    // existing); Update login, shown when the user asked for it, opens the pick. A site's
+    // excludeCredentials list is not consulted: the user decides what to save.
     function startCreate(rec) {
       rec.title = normTitle(defaultTitle(rec));
       rec.stage = 'offer';
-      card(rec, 'offer', { site: siteName(rec), name: userLabel(rec) });
+      card(rec, 'offer', Object.assign({ site: siteName(rec), name: userLabel(rec) }, userOptions().updateLogin ? { update: true } : {}));
     }
     // Update login: the request takes the popup slot like a sign-in. The adapter reports Reborn's
     // capture fields for the owner's page, and the app's fill of the picked login comes back
@@ -266,6 +285,7 @@
     function startGet(rec) {
       rec.allow = (rec.options.allowCredentials || [])
         .filter((c) => c && typeof c.id === 'string').map((c) => normId(c.id));
+      if (userOptions().askSignIn) { rec.stage = 'ask'; return card(rec, 'ask', { site: rec.rpId }); }   // Sign in first: the popup opens on the click
       getOpenPopup(rec);                             // the popup is the prompt
     }
     function getOpenPopup(rec) {
@@ -391,5 +411,5 @@
     return { onConnect, handleFillItem, handleCapture, onTabActivated, onTabRemoved, onWindowFocusChanged, getState };
   }
 
-  return { createManager, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, WINDOW_ID_NONE };
+  return { createManager, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, WINDOW_ID_NONE, STYLES };
 });
