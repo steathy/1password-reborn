@@ -2,10 +2,14 @@
 
 The classic 1Password extension, reborn for today's browsers — now with passkeys.
 
-> **1Password 7 edition (1.6.0-1p7).** This branch, `1pass7`, is for **1Password 7 for Windows
-> only** (up to 7.9.834, the last release that serves the classic extension). It keeps a site's
-> **password and passkey in one login**. For 1Password 4, use the main version (one item per
-> passkey): <https://github.com/steathy/1password-reborn/tree/main>.
+> **Plain edition (1.7.0-plain).** This branch, `1pass7-plain`, is for **1Password 7 for Windows
+> only** (up to 7.9.834, the last release that serves the classic extension) and for people who
+> know how Reborn's passkeys work. It asks as little as possible: a save takes one click, a
+> sign-in takes only your pick in 1Password, and the checks and hints of the other versions are
+> left out (see [What the plain edition leaves out](#what-the-plain-edition-leaves-out)). The
+> 1Password 7 edition with those checks is on
+> [`1pass7`](https://github.com/steathy/1password-reborn/tree/1pass7); for 1Password 4, use the
+> [main version](https://github.com/steathy/1password-reborn/tree/main).
 
 > **Unofficial community port — not affiliated with, authorized by, or endorsed by
 > 1Password / AgileBits.** "1Password" and "AgileBits" are trademarks of their owner.
@@ -51,7 +55,7 @@ original used — native messaging (`2bua8c4s2c.com.agilebits.1password`) and a
 Open **Windows PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/steathy/1password-reborn/1pass7/install.ps1 | iex
+irm https://raw.githubusercontent.com/steathy/1password-reborn/1pass7-plain/install.ps1 | iex
 ```
 
 It downloads this repo, then shows a menu:
@@ -87,14 +91,14 @@ It downloads this repo, then shows a menu:
 
 ## Firefox
 
-The 1Password 7 edition ships one XPI under [`dist/firefox/`](dist/firefox/), unsigned
+The plain edition ships one XPI under [`dist/firefox/`](dist/firefox/), unsigned
 (its add-on ID is AgileBits' own, which Mozilla cannot sign for another developer). Same
 engine, same shims, same passkeys; the Firefox manifest lists the background files in the
 order Chrome imports them.
 
 | Build | For | Signed | Install |
 | --- | --- | --- | --- |
-| `1password-reborn-firefox-1p7.xpi` | 1Password 7 (native messaging; its host only allows AgileBits' extension ID) | no, Mozilla cannot sign another developer's ID | Developer Edition, Nightly or ESR with `xpinstall.signatures.required = false` in `about:config` |
+| `1password-reborn-firefox-plain.xpi` | 1Password 7 (native messaging; its host only allows AgileBits' extension ID) | no, Mozilla cannot sign another developer's ID | Developer Edition, Nightly or ESR with `xpinstall.signatures.required = false` in `about:config` |
 
 - **The install prompt lists data the extension handles**: authentication information,
   browsing activity and website content. Mozilla requires every new extension to declare
@@ -103,10 +107,12 @@ order Chrome imports them.
   fill them). Nothing goes to any server or to the developer; there is no telemetry. The
   retired "Report website issue" command of the original extension is disabled so that
   stays true.
-- **Updates** come from this repo over https (`dist/firefox/updates.json` on the `1pass7`
-  branch, so it never switches to the main version); Firefox checks on its usual schedule,
-  or use `about:addons` → gear → Check for Updates. The unsigned build updates only where
-  signature checking is off, which is already true where it runs.
+- **Updates** come from this repo over https (`dist/firefox/updates.json` on the
+  `1pass7-plain` branch, so it never switches to another edition); Firefox checks on its usual
+  schedule, or use `about:addons` → gear → Check for Updates. The unsigned build updates only
+  where signature checking is off, which is already true where it runs.
+- **One edition per Firefox profile.** This build has the same add-on ID as the 1Password 7
+  edition's build (1Password 7 admits no other), so installing one replaces the other.
 - **Remove** it in `about:addons`. The installer never edits Firefox's preferences.
 - The installer's **[4] Firefox** entry detects your Firefox channels and 1Password 7 and
   opens the XPI in Developer Edition, Nightly or ESR; it explains the `about:config` step.
@@ -244,37 +250,46 @@ extension does all the WebAuthn work and uses the app only as storage.
 When a site asks for a passkey, a card appears in the middle of the page, over a
 dimmed page:
 
-- **Create:** "Save this passkey in 1Password?" with an editable title. *Save in
-  1Password* then asks you to **pick the login to add this passkey to** in the 1Password
-  popup: pick the site's existing login, and Reborn copies its username and password into
-  **one new item** together with the passkey. If the login's username differs from the
-  passkey's account, a card asks first (*Use this login*, *Pick again*, *New login
-  instead*). *New login instead* saves the passkey in a new item of its own. In 1Password
-  7's save window choose **Create New** (it preselects Update existing, which would not
-  save the passkey and would replace the selected login's username and password), type the
-  title you want (the card shows the proposed one, with edit and copy buttons), save, and
-  click **Done** on the card; only then does the site receive the credential. Your old
-  login stays: move anything else you need from it, such as notes or one-time codes, then
-  delete it.
-- **The switch:** the toolbar icon's right-click menu **1Password passkeys → Add new
-  passkeys to an existing login** (on by default). Turned off, every passkey goes into a
-  new item of its own.
+- **Create:** the card says "Save this passkey in 1Password" and has one save button,
+  **Register/Update**. It hands the passkey to 1Password 7 at once, as a login of its own
+  (username and passkey, no password), and the site receives the passkey in the same moment:
+  there is no Done step. The button is named after 1Password 7's save window, which opens
+  next. **Create New** there saves the passkey. **Update existing** saves no passkey: it only
+  overwrites the username of the login you select there (after *Update login*, its password
+  too). If you cancel that window or chose Update existing, the site already has a passkey
+  that your vault lacks: see Re-save under Limitations.
+- **Update login** (an option, off at first): the card then has **Register new** and **Update
+  login**. *Update login* opens the 1Password popup: pick the site's existing login, and Reborn
+  copies its username and password into **one new item** together with the passkey. The pick
+  is used as it is: nothing asks when the login belongs to another account, and a login
+  without a password gives a passkey-only item. Choose **Create New** in 1Password 7's window.
+  Your old login stays: move anything else you need from it, such as notes or one-time codes,
+  then delete it. *Register new*, on either card, saves the passkey as a login of its own.
 - **Where 1Password 7 puts it:** the passkey is a **text** field `passkey` under **Saved on
   &lt;site&gt;** in the login. 1Password 7 shows it **in clear text** when you open the login: it is
   the passkey's private key, so do not copy it anywhere else or show it on a shared screen. It
   stays as encrypted in the vault as the password next to it. A later password change that
   1Password 7 saves with **Update existing** replaces only the password; the passkey stays.
-- **Sign in:** pick the login in the 1Password popup, then click **Sign in** on the card.
-  A login that holds both fills its password on normal sign-in pages, and its passkey when
-  a site asks for a passkey. Passkey items saved by earlier Reborn versions keep working.
-- **Use another way** is on every card except the one shown while a new passkey is being saved
-  (Done / Cancel only). It hands the request to the browser's own passkey dialog.
+- **Sign in:** the 1Password popup opens at once; pick the login and you are signed in, with
+  no further click. With the option **Sign in** on, a card with a *Sign in* button comes first
+  and the popup opens on that click. A login that holds both fills its password on normal
+  sign-in pages, and its passkey when a site asks for a passkey. Passkey items saved by
+  earlier Reborn versions keep working.
+- **Every card** has *Another way*, which hands the request to the browser's own passkey
+  dialog, and *Cancel*. It also counts down: the time left stands in the top line and a bar
+  along the bottom edge shrinks with it; both turn red at about a third left. A request ends
+  when its time is up: the site's own limit, but at least 30 seconds and at most two minutes.
+- **Options:** right-click the toolbar icon and choose **Options…**. They open under the icon
+  (in a small window where the browser cannot do that): *Show "Update login" when saving*,
+  *Show "Sign in" when authenticating* and the **card style** (Reborn, 1Password 4 or
+  1Password 7), with a sample of the save card. A change is saved as you make it and applies
+  to the next card.
 
-**Add a passkey to a login you already have, by hand.** The pick step above copies your login
-into a new item. To keep the login itself, with its notes, one-time codes and history:
+**Add a passkey to a login you already have, by hand.** *Update login* copies your login into
+a new item. To keep the login itself, with its notes, one-time codes and history:
 
-1. Save the passkey on its own: turn the switch off (or choose *New login instead*), register,
-   choose **Create New** in 1Password 7's window and click **Done**.
+1. Save the passkey on its own: register, click **Register/Update** (or **Register new**) and
+   choose **Create New** in 1Password 7's window.
 2. In 1Password 7, open the new item and click the copy button of its `passkey` field.
 3. Open your existing login, click **Edit**, add a section named `Passkey` (1Password 7 shows
    it as PASSKEY), add a field of type **Text** labelled exactly `passkey`, paste, and save.
@@ -307,23 +322,52 @@ passkey field by hand breaks the passkey; Dropbox's file history is the undo.
   button; the dropdown itself shows only browser-native passkeys.
 - ES256 only. Requests that demand a `cross-platform` authenticator go straight to
   the browser.
-- The user-verification bit is set whenever the vault is unlocked and you clicked
-  Sign in; there is no per-operation PIN or biometric. Anyone at your unlocked PC with
+- The user-verification bit is set whenever the vault is unlocked and you picked the
+  login; there is no per-operation PIN or biometric. Anyone at your unlocked PC with
   the vault unlocked could use these passkeys, just as they could copy your passwords.
-- One passkey request at a time can use the 1Password popup; a second tab waits and
-  continues when you switch to it. Switching tab or window while waiting cancels. The
+- One passkey request at a time can use the 1Password popup, and only from the tab you are
+  looking at; a request in another tab waits and continues when you switch to it. Switching
+  tab or window while the popup waits for your pick cancels that request. The
   app shows one popup at a time and switching tabs closes it; if a waiting request
   shows no popup, click the 1Password toolbar button and pick the item there.
 - The card lives in the page's DOM. Its buttons ignore scripted clicks and clicks in
   the first 500 ms, but a page on the same site could still hide or cover it.
-- If you cancel 1Password 7's save window, or chose Update existing there, re-send the
-  passkey from the toolbar icon's right-click menu **1Password passkeys → Re-save …**
-  (kept until the browser closes, or the extension is updated, reloaded or disabled) and
-  choose **Create New**. Re-save cannot undo what Update existing wrote into the login you
-  selected.
+- **Re-save.** Reborn keeps a copy of each new passkey from the save until 1Password first
+  hands it back, at a sign-in or a fill of that login (which shows that it is in the vault),
+  or until the browser closes or the extension is updated, reloaded or disabled. While it
+  holds one, the toolbar icon's right-click menu
+  has **1Password passkeys → Re-save …** and **Discard all**. If you cancelled 1Password 7's
+  save window, or chose Update existing there, the site holds a passkey that your vault lacks:
+  Re-save it and choose **Create New**. Re-save cannot undo what Update existing wrote into
+  the login you selected.
 - Passkeys are unusable from 1Password 7 on the iPhone (no passkey support there); it
   shows the passkey as text in the login. Register a second passkey there in iCloud
   Keychain if you need one.
+
+### What the plain edition leaves out
+
+The other versions ask before they act. This edition takes your pick in 1Password as the
+answer, which saves clicks and removes these safeguards:
+
+- **No click on Reborn before a sign-in.** Your pick in the 1Password popup is the consent,
+  and the site is told that you were verified on the strength of it. A page in the tab you
+  are looking at can make the popup open by asking for a passkey, again and again. And a page
+  on a passkey's own site that asks for a passkey while you pick that site's login for
+  another reason, such as an ordinary password fill, receives a passkey sign-in. Turn on
+  *Show "Sign in" when authenticating* to get the click back.
+- **No Done step.** The site has the passkey as soon as the save is handed to 1Password. If
+  you cancel 1Password 7's save window or choose Update existing, the passkey exists only in
+  Reborn's copy until you Re-save it.
+- **No question about the account.** *Update login* copies the login you pick, also when its
+  username is not the passkey's account.
+- **No memory of sites.** Reborn does not remember which sites have a passkey and does not
+  look at the list a site sends of the passkeys you already have, so several passkeys for one
+  account can pile up.
+- **A fill counts as the pick.** While the card "Pick a login for this passkey" is up, an
+  ordinary 1Password fill in that tab is taken as the pick: nothing is typed, and 1Password
+  7's save window opens.
+- **No hints.** The cards do not say what to choose in 1Password 7's save window, and there
+  is no editable title: type the title you want in that window.
 
 ## Layout
 
@@ -333,7 +377,7 @@ src/                    the loadable / packable MV3 extension
   sw-bootstrap.js       Chrome entry point: imports bg/ and the engine
   bg/                   background shims shared by Chrome and Firefox (before/after the engine)
   rules/                declarativeNetRequest rules (deep link + dead-page redirect)
-  passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core)
+  passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core, options popup)
   ext/tldts.min.js      public-suffix list (rpId validation), unmodified
   paired.html           "Connected" page shown in place of the retired welcome page
   global.min.js         1Password engine, unmodified
@@ -341,10 +385,10 @@ src/                    the loadable / packable MV3 extension
   ext/sjcl.js           crypto library, unmodified
   fillStyle.css         content-script styles, unmodified
   assets/               icons
-build/                  pack-firefox.js (the 1Password 7 XPI); pack.ps1 + compute-id.js build the main version's crx; key.pem gitignored
+build/                  pack-firefox.js (the plain edition's XPI); pack.ps1 + compute-id.js build the main version's crx; key.pem gitignored
 tools/                  1pif-to-bitwarden.js (migrate passkeys to Bitwarden)
 tests/                  node --test suites: passkey modules, background shims, Firefox packer, installer, release metadata
-dist/                   committed install artifacts: firefox/ (the 1Password 7 XPI + updates.json)
+dist/                   committed install artifacts: firefox/ (the plain edition's XPI + updates.json)
 original/               the unmodified original MV2 extension (.crx)
 install.ps1 / .bat      one-command / one-click installer (menu; self-elevating)
 seed-op4.ps1            first-run fix: set VerifyCodeSignature=0 (accept modern browsers)
@@ -384,11 +428,11 @@ Edition with 1Password 7.3.657 and 7.9.834.
   is exempt from Private Network Access); confirm on your setup. On Firefox (event page)
   the connection works through the CSP override and shim 7 (see Firefox); Firefox 158's
   Local Network Access did not prompt for it in the 1.5.0 tests.
-- **Passkeys depend on two in-page clicks and the app's untagged popup reply.** See
-  the Passkeys section; a stale popup can never complete another tab's request, but
-  it can leave a confusing "no passkey" notice.
+- **A passkey sign-in is completed by the app's untagged popup reply alone.** See
+  [What the plain edition leaves out](#what-the-plain-edition-leaves-out); a stale popup can
+  never complete another tab's request, but it can leave a confusing "no passkey" notice.
 - **`chrome.storage.session` holds unsaved passkeys only until the browser closes, or the extension is updated, reloaded or disabled** (Chrome clears it then).
-  Click Done only after the app really saved the item.
+  The site has the passkey from the moment of the save: check that 1Password really saved the item before you close the browser.
 - **Passkey items saved by earlier versions hold the passkey as the item's password,
   and 1Password 7 shows this edition's passkey field in clear text.** Copying either, or
   letting another 1Password client fill it, exposes the private key. Treat them as

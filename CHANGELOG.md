@@ -5,6 +5,48 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
+## [1.7.0-plain] - unreleased
+
+Plain edition, branch `1pass7-plain` (1Password 7 for Windows only): the fewest interactions,
+for people who know how Reborn's passkeys work. It builds on 1.6.0-1p7; the 1Password 7 edition
+and the main version stay as they are.
+
+### Added
+- **Options under the toolbar icon:** right-click → **Options…** opens a popup with two
+  switches, *Show "Update login" when saving* and *Show "Sign in" when authenticating* (both
+  off at first), the card style and a sample of the save card.
+- **Countdown on every card:** the time left and a bar, red from about a third left. A request
+  never lives longer than two minutes.
+- **Three card styles:** Reborn, 1Password 4 and 1Password 7. In each, all buttons of a card
+  stand in one line at one width.
+- README: how to add a passkey to a login you already have, by hand.
+
+### Changed
+- **Save:** one button, **Register/Update**, saves the passkey as a login of its own and gives
+  it to the site at once; there is no Done step. With *Update login* on, the card offers
+  **Register new** and **Update login** (pick a login; its username and password go into one
+  new item with the passkey).
+- **Sign in:** the 1Password popup opens at once and the pick signs in. With *Sign in* on, a
+  card with a Sign in button comes first.
+- Only the tab you are looking at can open the 1Password popup; a request from another tab
+  waits until you switch to it.
+- The menu **1Password passkeys** (Re-save, Discard all) shows only while Reborn holds a copy
+  of a new passkey.
+- Firefox: the edition's own unsigned build, `1password-reborn-firefox-plain.xpi`, updating
+  from this branch.
+
+### Fixed
+- A passkey kept as a text field (the "Saved on &lt;site&gt;" field, or one added by hand), or
+  turned into a login's password by Update existing, is always removed from an item before the
+  engine fills it. Before, only the concealed `passkey` field of earlier items was.
+- A request id that a page sends again can no longer act for the request that has ended.
+
+### Removed
+- The checks and hints of the 1Password 7 edition: the card about a different account, the
+  refusal when a site already has a passkey, the Done step, the editable title, the menu
+  switch *Add new passkeys to an existing login* and Reborn's memory of sites with a passkey.
+  See "What the plain edition leaves out" in the README.
+
 ## [1.6.0-1p7] - 2026-11-12
 
 1Password 7 edition, branch `1pass7` (1Password 7 for Windows only). The main version stays the

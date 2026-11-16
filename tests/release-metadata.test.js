@@ -39,3 +39,13 @@ test('the installer downloads this edition: its branch is the one of the Firefox
   assert.ok(install.includes("$FirefoxXpiUnsigned = 'dist\\firefox\\1password-reborn-firefox-plain.xpi'"));
   assert.equal(install.includes('firefox-1p7.xpi'), false);
 });
+
+test("the README installs this edition: the one-command URL, the XPI's name and the update channel are this branch's", () => {
+  const readme = read('README.md').toString('utf8');
+  assert.ok(readme.includes('irm https://raw.githubusercontent.com/steathy/1password-reborn/1pass7-plain/install.ps1 | iex'));
+  assert.equal(readme.includes('/1pass7/install.ps1'), false);
+  assert.ok(readme.includes('`1password-reborn-firefox-plain.xpi`'));
+  assert.equal(readme.includes('firefox-1p7.xpi'), false);
+  assert.ok(/updates\.json` on the\s+`1pass7-plain` branch/.test(readme));
+  assert.ok(read('NOTICE').toString('utf8').includes('dist/firefox/1password-reborn-firefox-plain.xpi'));
+});

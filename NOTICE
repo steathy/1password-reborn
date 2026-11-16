@@ -12,7 +12,7 @@ endorsement by 1Password / AgileBits is claimed or implied.
    - src/fillStyle.css
    - src/assets/*  (icons)
    - original/1Password-4.7.5.90.crx   (the unmodified original MV2 extension)
-   - dist/firefox/1password-reborn-firefox-1p7.xpi
+   - dist/firefox/1password-reborn-firefox-plain.xpi
                                        (the engine repackaged for Firefox, for
                                         1Password 7, unsigned; the engine files
                                         are unchanged; only manifest.json,
