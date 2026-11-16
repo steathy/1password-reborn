@@ -45,6 +45,22 @@ $UpdateUrl  = "$RawBase/dist/updates.xml"
 # belongs to AgileBits, so Mozilla will not sign it) and needs Developer Edition, Nightly or ESR.
 $FirefoxXpiSigned   = 'dist\firefox\1password-reborn-firefox.xpi'
 $FirefoxXpiUnsigned = 'dist\firefox\1password-reborn-firefox-1p7.xpi'
+$ForceInstallId = 'mmfoigkanhpccidpokhjnomdcmgmjomj'   # Reborn's signed crx (build/key.pem); Uninstall removes its force-install policy
+
+# The three editions (docs: one installer for the three editions). Pattern: the tags of the
+# edition's releases; Fallback: the tag used when GitHub's release list cannot be read; Files: what
+# a download of the edition must hold; Xpi: the unsigned Firefox build of an edition for 1Password 7.
+$Editions = [ordered]@{
+  'main'  = @{ Key = 'main';  Name = 'Reborn';              Branch = 'main';         Pattern = '^v\d+\.\d+\.\d+$';       Fallback = 'v1.5.0';
+               About = '1Password 4 and 7; one item per passkey'; Force = $true
+               Files = @('src\manifest.json', 'dist\1password-reborn.crx', 'dist\extension.json') }
+  '1p7'   = @{ Key = '1p7';   Name = '1Password 7 edition'; Branch = '1pass7';       Pattern = '^v\d+\.\d+\.\d+-1p7$';   Fallback = 'v1.8.0-1p7';
+               About = 'password and passkey in one login'; Force = $false; Xpi = 'dist\firefox\1password-reborn-firefox-1p7.xpi'
+               Files = @('src\manifest.json', 'dist\firefox\1password-reborn-firefox-1p7.xpi') }
+  'plain' = @{ Key = 'plain'; Name = 'Plain edition';       Branch = '1pass7-plain'; Pattern = '^v\d+\.\d+\.\d+-plain$'; Fallback = 'v1.7.0-plain';
+               About = 'fewest clicks, for experienced users'; Force = $false; Xpi = 'dist\firefox\1password-reborn-firefox-plain.xpi'
+               Files = @('src\manifest.json', 'dist\firefox\1password-reborn-firefox-plain.xpi') }
+}
 
 # ---- MAS-style dedicated window --------------------------------------------
 # Run the interactive menu in its own console window (like Microsoft Activation
@@ -180,9 +196,11 @@ function Restart-Agent {
   Start-Sleep -Seconds 2
   Write-Host "Restarted 1Password + agent - reopen 1Password 4 and UNLOCK it." -ForegroundColor Cyan
 }
-function Test-Payload($root) {
-  $root -and (Test-Path (Join-Path $root 'dist\1password-reborn.crx')) `
-        -and (Test-Path (Join-Path $root 'dist\extension.json'))
+function Test-Payload($root, [string]$EditionKey = 'main') {
+  # True when $root holds every file a download of the edition must contain.
+  if (-not $root) { return $false }
+  foreach ($f in $Editions[$EditionKey].Files) { if (-not (Test-Path (Join-Path $root $f))) { return $false } }
+  return $true
 }
 function Get-RemoteSha {
   # The branch head commit SHA is a cheap content fingerprint - a few bytes over
@@ -285,6 +303,62 @@ function Show-OP7EdgeWarning {
   Write-Mid ('1Password 7 ' + $ver + ' refuses Microsoft Edge.') 'Yellow'
   Write-Mid 'For Edge, update 1Password 7 to 7.4.767 or later, or use Chrome.' 'Gray'
   Write-Host ''
+}
+
+# ---- Editions and releases -------------------------------------------------------
+function Get-EditionOfVersionName([string]$VersionName) {
+  # The edition a manifest's version_name names: "4.7.5.96 (Reborn 1.8.0-1p7)" -> 1p7; else $null.
+  if ($VersionName -match '\(Reborn \d+\.\d+\.\d+-1p7\)')   { return '1p7' }
+  if ($VersionName -match '\(Reborn \d+\.\d+\.\d+-plain\)') { return 'plain' }
+  if ($VersionName -match '\(Reborn \d+\.\d+\.\d+\)')       { return 'main' }
+  return $null
+}
+function Get-LocalEdition($root) {
+  # Which edition the files under $root are (a clone, an unzipped release, a download), or $null.
+  if (-not $root) { return $null }
+  $m = Join-Path $root 'src\manifest.json'
+  if (-not (Test-Path $m)) { return $null }
+  try { $vn = [string](Get-Content $m -Raw | ConvertFrom-Json).version_name } catch { return $null }
+  return (Get-EditionOfVersionName $vn)
+}
+function Select-ReleaseTags($Releases) {
+  # Per edition the newest release that is neither a draft nor a prerelease and whose tag matches
+  # the edition's pattern, by version (v1.10.0 above v1.9.0). Without one, or when the list could
+  # not be read ($null), the edition's fallback tag, marked Builtin. Pure.
+  $out = @{}
+  foreach ($e in $Editions.Values) {
+    $best = $null; $bestV = $null
+    foreach ($r in @($Releases)) {
+      if ($null -eq $r -or $r.draft -or $r.prerelease) { continue }
+      $t = [string]$r.tag_name
+      if ($t -notmatch $e.Pattern) { continue }
+      $v = [version]($t.Substring(1) -replace '-.*$', '')
+      if ($null -eq $bestV -or $v -gt $bestV) { $best = $t; $bestV = $v }
+    }
+    if ($best) { $out[$e.Key] = @{ Tag = $best; Builtin = $false } }
+    else       { $out[$e.Key] = @{ Tag = $e.Fallback; Builtin = $true } }
+  }
+  return $out
+}
+function Resolve-PayloadSource {
+  # Where the chosen edition's files come from. Pure: the caller probes.
+  #   payloadroot  -PayloadRoot holds the edition's files (the elevated restart)
+  #   local        the folder the script runs from holds that edition (a clone, an unzipped release)
+  #   cache        $InstallDir holds that edition at the release's tag, or at any tag when GitHub's
+  #                release list could not be read
+  #   download     everything else: the zip of the release tag
+  param([string]$EditionKey, [bool]$RootOk, [string]$LocalEdition, $Staged, [string]$Tag, [bool]$LookupOk, [bool]$CacheOk)
+  if ($RootOk) { return 'payloadroot' }
+  if ($LocalEdition -and $LocalEdition -eq $EditionKey) { return 'local' }
+  if ($CacheOk -and $Staged -and $Staged.Edition -eq $EditionKey -and ($Staged.Tag -eq $Tag -or -not $LookupOk)) { return 'cache' }
+  return 'download'
+}
+function Resolve-ModeEdition {
+  # The edition a -Mode run acts on: -Edition, else the staged edition, else Reborn. Pure.
+  param([string]$Edition, $Staged)
+  if ($Edition) { return $Edition }
+  if ($Staged -and $Staged.Edition) { return $Staged.Edition }
+  return 'main'
 }
 
 function Install-Force($payload) {

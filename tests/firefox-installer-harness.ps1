@@ -11,6 +11,12 @@
     { "fn": "op7" }                              -> { Version: "7.3.657" | null }
     { "fn": "plan", "firefoxes": [...], "hasOP4": bool, "op7": "7.3.657"|null, "appChoice": "", "anyway": "" }
     { "fn": "install", "payload": "C:\\op4-test-payload" }  -> Install-Firefox with all mocks; { Started, Output, Error }
+  The editions (tests/installer-editions.test.js):
+    { "fn": "tags", "releases": [...] | "unreadable": true }  -> Select-ReleaseTags per edition
+    { "fn": "edition-of", "versionName": "..." }             -> Get-EditionOfVersionName
+    { "fn": "payload-ok", "root": "...", "edition": "1p7" }  -> Test-Payload
+    { "fn": "source", ... }                                  -> Resolve-PayloadSource
+    { "fn": "mode-edition", "edition": "", "staged": {...} }  -> Resolve-ModeEdition
   The mocks are functions that shadow the cmdlets (PowerShell resolves functions before cmdlets):
   Test-Path, Get-Content, Get-ItemProperty, Start-Process, Read-Host, Clear-Host, Write-Host.
   No real Firefox is launched and no registry is read.
@@ -45,6 +51,10 @@ function Write-Host { [CmdletBinding()] param([Parameter(Position = 0, ValueFrom
 function ConvertTo-Firefoxes($list) {
   return @(@($list) | ForEach-Object { @{ Name = $_.Name; Exe = $_.Exe; Channel = $_.Channel; Unsigned = [bool]$_.Unsigned } })
 }
+function ConvertTo-Staged($s) {
+  if (-not $s) { return $null }
+  return @{ Edition = [string]$s.Edition; Tag = [string]$s.Tag }
+}
 
 $cases = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($CasesPath))
 $results = @()
@@ -75,6 +85,18 @@ foreach ($c in @($cases)) {
       try { Install-Firefox ([string]$c.payload) } catch { $err = $_.Exception.Message }
       $results += @{ Started = @($script:Started); Output = ($script:Output -join "`n"); Error = $err }
     }
+    'tags' {
+      $rel = $null; if (-not $c.unreadable) { $rel = @($c.releases) }
+      $t = Select-ReleaseTags $rel
+      $results += @{ main = $t['main']; '1p7' = $t['1p7']; plain = $t['plain'] }
+    }
+    'edition-of' { $results += @{ Edition = (Get-EditionOfVersionName ([string]$c.versionName)) } }
+    'payload-ok' { $results += @{ Ok = [bool](Test-Payload ([string]$c.root) ([string]$c.edition)) } }
+    'source' {
+      $results += @{ Source = (Resolve-PayloadSource -EditionKey ([string]$c.edition) -RootOk ([bool]$c.rootOk) -LocalEdition ([string]$c.local) `
+        -Staged (ConvertTo-Staged $c.staged) -Tag ([string]$c.tag) -LookupOk ([bool]$c.lookupOk) -CacheOk ([bool]$c.cacheOk)) }
+    }
+    'mode-edition' { $results += @{ Edition = (Resolve-ModeEdition -Edition ([string]$c.edition) -Staged (ConvertTo-Staged $c.staged)) } }
   }
 }
 [IO.File]::WriteAllText($OutPath, (ConvertTo-Json -InputObject $results -Compress -Depth 8), (New-Object Text.UTF8Encoding $false))
