@@ -17,6 +17,12 @@
     { "fn": "payload-ok", "root": "...", "edition": "1p7" }  -> Test-Payload
     { "fn": "source", ... }                                  -> Resolve-PayloadSource
     { "fn": "mode-edition", "edition": "", "staged": {...} }  -> Resolve-ModeEdition
+    { "fn": "fit", "edition": "1p7", "hasOP4": bool, "op7": "7.9.834"|null }  -> Resolve-EditionFit
+    { "fn": "app-line" | "app-notes", ... }                   -> Get-AppLine, Get-AppNotes
+    { "fn": "answer", "answer": "yes" }                      -> Test-PlainConsent, Test-AnywayAnswer
+    { "fn": "edition-choice" | "mode-choice", ... }          -> Resolve-EditionChoice, Resolve-ModeChoice
+    { "fn": "mode-rows" | "edition-rows", ... }              -> Get-ModeRows, Get-EditionRows
+    { "fn": "split", "text": "...", "width": 58 }            -> Split-Lines
   The mocks are functions that shadow the cmdlets (PowerShell resolves functions before cmdlets):
   Test-Path, Get-Content, Get-ItemProperty, Start-Process, Read-Host, Clear-Host, Write-Host.
   No real Firefox is launched and no registry is read.
@@ -97,6 +103,31 @@ foreach ($c in @($cases)) {
         -Staged (ConvertTo-Staged $c.staged) -Tag ([string]$c.tag) -LookupOk ([bool]$c.lookupOk) -CacheOk ([bool]$c.cacheOk)) }
     }
     'mode-edition' { $results += @{ Edition = (Resolve-ModeEdition -Edition ([string]$c.edition) -Staged (ConvertTo-Staged $c.staged)) } }
+    'fit' {
+      $f = Resolve-EditionFit -EditionKey ([string]$c.edition) -HasOP4 ([bool]$c.hasOP4) -OP7Version $c.op7
+      $results += @{ Fits = $f.Fits; Reason = $f.Reason }
+    }
+    'app-line' { $results += @{ Line = (Get-AppLine -HasOP4 ([bool]$c.hasOP4) -OP7Version $c.op7) } }
+    'app-notes' {
+      $n = Get-AppNotes -OP7Version $c.op7 -LookupOk ([bool]$c.lookupOk)
+      $results += @{ Notes = @($n) }
+    }
+    'answer' { $results += @{ Yes = (Test-PlainConsent ([string]$c.answer)); Anyway = (Test-AnywayAnswer ([string]$c.answer)) } }
+    'edition-choice' { $results += @{ Choice = (Resolve-EditionChoice -Answer ([string]$c.answer) -Mark ([string]$c.mark)) } }
+    'mode-choice' { $results += @{ Choice = (Resolve-ModeChoice -Answer ([string]$c.answer) -EditionKey ([string]$c.edition)) } }
+    'mode-rows' {
+      $rows = Get-ModeRows ([string]$c.edition)
+      $results += ,@($rows | ForEach-Object { $_.Key + ' ' + $_.Label + ' | ' + $_.Hint })
+    }
+    'edition-rows' {
+      $tags = @{}; foreach ($p in $c.tags.PSObject.Properties) { $tags[$p.Name] = @{ Tag = [string]$p.Value; Builtin = $false } }
+      $rows = Get-EditionRows -Tags $tags -HasOP4 ([bool]$c.hasOP4) -OP7Version $c.op7 -Mark ([string]$c.mark)
+      $results += ,@($rows | ForEach-Object { @{ Key = $_.Key; Edition = $_.Edition; Label = $_.Label; Version = $_.Version; About = $_.About; Fit = $_.Fit; Marked = $_.Marked } })
+    }
+    'split' {
+      $lines = Split-Lines ([string]$c.text) ([int]$c.width)
+      $results += ,@($lines)
+    }
   }
 }
 [IO.File]::WriteAllText($OutPath, (ConvertTo-Json -InputObject $results -Compress -Depth 8), (New-Object Text.UTF8Encoding $false))

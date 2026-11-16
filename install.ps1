@@ -361,6 +361,119 @@ function Resolve-ModeEdition {
   return 'main'
 }
 
+# ---- The app gate, the answers, the menus' rows ----------------------------------------
+function Get-AppState {
+  # What the app gate looks at: whether 1Password 4 is installed, and the 1Password 7 version or $null.
+  return @{ HasOP4 = (Test-OP4Installed); OP7 = (Get-OP7Version) }
+}
+function Resolve-EditionFit {
+  # The app gate. Pure. 1Password 7 fits every edition up to 7.9.834, the last release that serves
+  # the classic extension (versions compared on three parts); 1Password 4 fits Reborn only.
+  # Returns @{ Fits; Reason }.
+  param([string]$EditionKey, [bool]$HasOP4, $OP7Version)
+  $op7 = $null
+  if ($OP7Version) { $v = [version]$OP7Version; $op7 = New-Object System.Version -ArgumentList $v.Major, $v.Minor, ([Math]::Max(0, $v.Build)) }
+  if ($op7 -and $op7 -le [version]'7.9.834') { return @{ Fits = $true; Reason = '' } }
+  if ($EditionKey -eq 'main' -and $HasOP4) { return @{ Fits = $true; Reason = '' } }
+  if ($op7) {
+    return @{ Fits = $false; Reason = ('1Password ' + $op7 + ' found: 1Password 7.9.835 and later refuse the classic extension ' +
+      '("1Password Classic is no longer supported"); 7.9.834 is the last release that serves it.') }
+  }
+  if ($HasOP4) { return @{ Fits = $false; Reason = 'It needs 1Password 7 (up to 7.9.834); only 1Password 4 was found.' } }
+  return @{ Fits = $false; Reason = 'No 1Password 4 or 7 was found on this PC.' }
+}
+function Get-AppLine {
+  # The edition menu's "found:" line. Pure.
+  param([bool]$HasOP4, $OP7Version)
+  $apps = @()
+  if ($HasOP4) { $apps += '1Password 4' }
+  if ($OP7Version) { $apps += ('1Password ' + $OP7Version) }
+  if (-not $apps) { return 'found: no 1Password 4 or 7' }
+  return ('found: ' + ($apps -join ' and '))
+}
+function Get-AppNotes {
+  # The notes under the edition menu's header: an unreadable release list, a 1Password 7 that is too new. Pure.
+  param($OP7Version, [bool]$LookupOk)
+  $notes = @()
+  if (-not $LookupOk) { $notes += "Couldn't read GitHub's releases - the versions shown are the built-in ones." }
+  if ($OP7Version) {
+    $fit = Resolve-EditionFit -EditionKey '1p7' -HasOP4 $false -OP7Version $OP7Version
+    if (-not $fit.Fits) { $notes += $fit.Reason }
+  }
+  return ,$notes
+}
+function Test-PlainConsent([string]$Answer) {
+  # The plain edition's warning goes on only for the word yes (any case, spaces around it ignored).
+  return (([string]$Answer).Trim().ToLower() -eq 'yes')
+}
+function Test-AnywayAnswer([string]$Answer) {
+  # "Continue anyway? [y/N]": only y goes on; Enter is no.
+  return (([string]$Answer).Trim().ToLower() -eq 'y')
+}
+function Resolve-EditionChoice {
+  # The edition menu's answer: 1, 2, 3 -> an edition; 0 or q -> quit; Enter -> the marked edition
+  # (none: $null); anything else -> $null. Pure.
+  param([string]$Answer, [string]$Mark)
+  switch (([string]$Answer).Trim().ToLower()) {
+    '1' { return 'main' }
+    '2' { return '1p7' }
+    '3' { return 'plain' }
+    '0' { return 'quit' }
+    'q' { return 'quit' }
+    ''  { if ($Mark) { return $Mark }; return $null }
+  }
+  return $null
+}
+function Resolve-ModeChoice {
+  # An edition's menu answer -> unpacked, force (Reborn only), uninstall, firefox, back, quit; else $null. Pure.
+  param([string]$Answer, [string]$EditionKey)
+  switch (([string]$Answer).Trim().ToLower()) {
+    '1' { return 'unpacked' }
+    '2' { if ($Editions[$EditionKey].Force) { return 'force' }; return $null }
+    '3' { return 'uninstall' }
+    '4' { return 'firefox' }
+    '9' { return 'back' }
+    '0' { return 'quit' }
+    'q' { return 'quit' }
+  }
+  return $null
+}
+function Get-ModeRows([string]$EditionKey) {
+  # The rows of an edition's menu. Pure.
+  $ff = 'unsigned build for 1Password 7'
+  if ($EditionKey -eq 'main') { $ff = 'signed build for 1Password 4; unsigned for 7' }
+  $rows = @(@{ Key = '[1]'; KeyColor = 'Green'; Label = 'Load unpacked'; Hint = 'recommended - any PC, no admin' })
+  if ($Editions[$EditionKey].Force) { $rows += @{ Key = '[2]'; KeyColor = 'Yellow'; Label = 'Force install'; Hint = 'no dev-mode nag, managed devices only' } }
+  $rows += @{ Key = '[3]'; KeyColor = 'Yellow'; Label = 'Uninstall';      Hint = 'remove the force-install policy' }
+  $rows += @{ Key = '[4]'; KeyColor = 'Green';  Label = 'Firefox';        Hint = $ff }
+  $rows += @{ Key = '[9]'; KeyColor = 'Cyan';   Label = 'Other editions'; Hint = '' }
+  $rows += @{ Key = '[0]'; KeyColor = 'Red';    Label = 'Quit';           Hint = '' }
+  return ,$rows
+}
+function Get-EditionRows {
+  # The rows of the edition menu: release, what it is, whether it fits, the mark. Pure.
+  param($Tags, [bool]$HasOP4, $OP7Version, [string]$Mark)
+  $rows = @(); $n = 0
+  foreach ($e in $Editions.Values) {
+    $n++
+    $fit = Resolve-EditionFit -EditionKey $e.Key -HasOP4 $HasOP4 -OP7Version $OP7Version
+    $rows += @{ Key = "[$n]"; Edition = $e.Key; Label = $e.Name; Version = ($Tags[$e.Key].Tag -replace '^v', ''); About = $e.About
+                Fit = $(if ($fit.Fits) { 'fits' } else { 'does not fit' }); Marked = ($e.Key -eq $Mark) }
+  }
+  return ,$rows
+}
+function Split-Lines([string]$Text, [int]$Width = 58) {
+  # Word-wraps $Text into lines of at most $Width characters; a longer word stands alone. Pure.
+  $lines = @(); $line = ''
+  foreach ($w in @($Text -split '\s+' | Where-Object { $_ })) {
+    if ($line -and ($line.Length + 1 + $w.Length) -gt $Width) { $lines += $line; $line = $w }
+    elseif ($line) { $line += ' ' + $w }
+    else { $line = $w }
+  }
+  if ($line) { $lines += $line }
+  return ,$lines
+}
+
 function Install-Force($payload) {
   $extId = (Get-Content (Join-Path $payload 'dist\extension.json') -Raw | ConvertFrom-Json).id
   if (-not (Test-Admin)) {

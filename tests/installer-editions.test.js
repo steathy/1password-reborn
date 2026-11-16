@@ -85,3 +85,95 @@ describe('install.ps1: the release of each edition and where its files come from
     assert.deepEqual([R[24], R[25], R[26]].map((r) => r.Edition), ['1p7', 'plain', 'main']);
   });
 });
+
+const fit = (edition, hasOP4, op7) => ({ fn: 'fit', edition, hasOP4, op7 });
+const REFUSED = /^1Password 7\.9\.83[56] found: 1Password 7\.9\.835 and later refuse the classic extension \("1Password Classic is no longer supported"\); 7\.9\.834 is the last release that serves it\.$/;
+
+describe('install.ps1: the app gate, the answers and the menus', { skip: SKIP }, () => {
+  let R;
+  before(() => {
+    R = runCases([
+      /* 0 */ fit('main', true, null),
+      /* 1 */ fit('1p7', true, null),
+      /* 2 */ fit('1p7', false, '7.9.834'),
+      /* 3 */ fit('plain', false, '7.3.657'),
+      /* 4 */ fit('1p7', false, '7.9.835'),
+      /* 5 */ fit('main', false, '7.9.836'),
+      /* 6 */ fit('main', true, '7.9.836'),
+      /* 7 */ fit('plain', true, '7.9.836'),
+      /* 8 */ fit('main', false, null),
+      /* 9 */ fit('plain', false, null),
+      /* 10 */ fit('1p7', false, '7.9.834.5'),
+      /* 11 */ { fn: 'app-line', hasOP4: true, op7: null },
+      /* 12 */ { fn: 'app-line', hasOP4: false, op7: '7.9.834' },
+      /* 13 */ { fn: 'app-line', hasOP4: true, op7: '7.9.834' },
+      /* 14 */ { fn: 'app-line', hasOP4: false, op7: null },
+      /* 15 */ { fn: 'app-notes', op7: '7.9.834', lookupOk: true },
+      /* 16 */ { fn: 'app-notes', op7: '7.9.836', lookupOk: true },
+      /* 17 */ { fn: 'app-notes', op7: null, lookupOk: false },
+      /* 18 */ ...['yes', 'YES', ' yes ', '', 'y', 'Y', 'no', 'yes please', 'n'].map((answer) => ({ fn: 'answer', answer })),
+      /* 27 */ ...[['1', ''], ['2', ''], ['3', ''], ['0', ''], ['q', ''], ['', ''], ['', '1p7'], [' 2 ', ''], ['9', '1p7'], ['', 'plain']]
+        .map(([answer, mark]) => ({ fn: 'edition-choice', answer, mark })),
+      /* 37 */ ...[['1', 'main'], ['2', 'main'], ['2', '1p7'], ['3', 'plain'], ['4', '1p7'], ['9', 'main'], ['0', 'main'], ['q', 'plain'], ['5', 'main'], ['', 'main']]
+        .map(([answer, edition]) => ({ fn: 'mode-choice', answer, edition })),
+      /* 47 */ { fn: 'mode-rows', edition: 'main' },
+      /* 48 */ { fn: 'mode-rows', edition: '1p7' },
+      /* 49 */ { fn: 'edition-rows', tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' }, hasOP4: false, op7: '7.9.834', mark: '1p7' },
+      /* 50 */ { fn: 'edition-rows', tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' }, hasOP4: true, op7: null, mark: '' },
+      /* 51 */ { fn: 'split', text: 'aaa bbb ccc', width: 7 },
+      /* 52 */ { fn: 'split', text: 'a verylongwordindeed b', width: 6 },
+      /* 53 */ { fn: 'split', text: '', width: 10 },
+    ]);
+  });
+
+  it('1Password 7 fits up to 7.9.834; 7.9.835 and later refuse the classic extension', () => {
+    assert.deepEqual([R[2], R[3], R[10]].map((r) => r.Fits), [true, true, true]);   // 7.9.834.5 counts as 7.9.834
+    for (const r of [R[4], R[5], R[7]]) {
+      assert.equal(r.Fits, false);
+      assert.match(r.Reason, REFUSED);
+    }
+  });
+  it('1Password 4 fits Reborn only; with nothing found nothing fits', () => {
+    assert.deepEqual(R[0], { Fits: true, Reason: '' });
+    assert.deepEqual(R[1], { Fits: false, Reason: 'It needs 1Password 7 (up to 7.9.834); only 1Password 4 was found.' });
+    assert.deepEqual(R[6], { Fits: true, Reason: '' });                            // Reborn with 1Password 4 beside a too new 1Password 7
+    assert.deepEqual(R[8], { Fits: false, Reason: 'No 1Password 4 or 7 was found on this PC.' });
+    assert.deepEqual(R[9], R[8]);
+  });
+  it('the header names the apps found, and says why a too new 1Password 7 or an unreadable release list matters', () => {
+    assert.deepEqual([R[11], R[12], R[13], R[14]].map((r) => r.Line),
+      ['found: 1Password 4', 'found: 1Password 7.9.834', 'found: 1Password 4 and 1Password 7.9.834', 'found: no 1Password 4 or 7']);
+    assert.deepEqual(R[15].Notes, []);
+    assert.equal(R[16].Notes.length, 1);
+    assert.match(R[16].Notes[0], REFUSED);
+    assert.deepEqual(R[17].Notes, ["Couldn't read GitHub's releases - the versions shown are the built-in ones."]);
+  });
+  it('the plain edition needs the word yes; "Continue anyway" needs y; Enter is no for both', () => {
+    assert.deepEqual(R.slice(18, 27).map((r) => [r.Yes, r.Anyway]), [
+      [true, false], [true, false], [true, false], [false, false], [false, true], [false, true], [false, false], [false, false], [false, false],
+    ]);
+  });
+  it('the edition menu: 1, 2, 3 pick, 0 or q quit, Enter picks the marked edition, anything else is ignored', () => {
+    assert.deepEqual(R.slice(27, 37).map((r) => r.Choice), ['main', '1p7', 'plain', 'quit', 'quit', null, '1p7', '1p7', null, 'plain']);
+  });
+  it("an edition's menu: Force install only for Reborn, 9 goes back to the editions", () => {
+    assert.deepEqual(R.slice(37, 47).map((r) => r.Choice), ['unpacked', 'force', null, 'uninstall', 'firefox', 'back', 'quit', 'quit', null, null]);
+    assert.deepEqual(R[47], ['[1] Load unpacked | recommended - any PC, no admin', '[2] Force install | no dev-mode nag, managed devices only',
+      '[3] Uninstall | remove the force-install policy', '[4] Firefox | signed build for 1Password 4; unsigned for 7', '[9] Other editions | ', '[0] Quit | ']);
+    assert.deepEqual(R[48], ['[1] Load unpacked | recommended - any PC, no admin', '[3] Uninstall | remove the force-install policy',
+      '[4] Firefox | unsigned build for 1Password 7', '[9] Other editions | ', '[0] Quit | ']);
+  });
+  it('the edition menu lists the three editions with their release, what they are, whether they fit, and the mark', () => {
+    assert.deepEqual(R[49], [
+      { Key: '[1]', Edition: 'main', Label: 'Reborn', Version: '1.5.0', About: '1Password 4 and 7; one item per passkey', Fit: 'fits', Marked: false },
+      { Key: '[2]', Edition: '1p7', Label: '1Password 7 edition', Version: '1.8.0-1p7', About: 'password and passkey in one login', Fit: 'fits', Marked: true },
+      { Key: '[3]', Edition: 'plain', Label: 'Plain edition', Version: '1.7.0-plain', About: 'fewest clicks, for experienced users', Fit: 'fits', Marked: false },
+    ]);
+    assert.deepEqual(R[50].map((r) => [r.Fit, r.Marked]), [['fits', false], ['does not fit', false], ['does not fit', false]]);
+  });
+  it('long texts wrap at the panel width', () => {
+    assert.deepEqual(R[51], ['aaa bbb', 'ccc']);
+    assert.deepEqual(R[52], ['a', 'verylongwordindeed', 'b']);
+    assert.deepEqual(R[53], []);
+  });
+});
