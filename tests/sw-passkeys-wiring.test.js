@@ -69,14 +69,15 @@ function boot(local, opts = {}) {
   return { sandbox, chrome, logs, calls, store };
 }
 
-function connect(env) {
+function connect(env, tabId = 5, origin = 'https://webauthn.io') {
   const posted = [];
   const msg = listener();
   env.chrome.runtime.onConnect.fns[0]({
-    name: 'op4-passkeys', sender: { tab: { id: 5, windowId: 1, url: 'https://webauthn.io/' }, origin: 'https://webauthn.io' },
+    name: 'op4-passkeys', sender: { tab: { id: tabId, windowId: 1, url: origin + '/' }, origin },
     onMessage: msg, onDisconnect: listener(), postMessage: (m) => posted.push(copy(m)),
   });
-  return { posted, send: async (m) => { msg.fns[0](m); await ticks(20); }, card: () => [...posted].reverse().find((m) => m.type === 'card').card };
+  const last = (type) => [...posted].reverse().find((m) => m.type === type);
+  return { posted, last, emit: (m) => msg.fns[0](m), send: async (m) => { msg.fns[0](m); await ticks(20); }, card: () => last('card').card };
 }
 const CREATE = { rp: { id: 'webauthn.io', name: 'webauthn.io' }, user: { id: 'AQID', name: 'alice@example.com', displayName: 'Alice' },
   challenge: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', pubKeyCredParams: [{ type: 'public-key', alg: -7 }] };
@@ -306,4 +307,25 @@ test('fillItem hook: the engine never receives a passkey kept in a section; a ho
   env.sandbox.AgentHandlers.fillItem({ get item() { throw new Error('boom'); } });
   assert.equal(env.calls.filled.length, 1);                                    // fail closed: nothing filled
   assert.ok(env.logs.some((l) => l.level === 'error' && l.text.includes('fillItem hook failed')));
+});
+
+/* ---------- reborn ports: designs 6 and 7 through the adapter ---------- */
+
+test('a request id sent again right behind the Save click: the aborted save is not sent and shows no card; the newer request saves', async () => {
+  const env = boot({ 'op4pk.settings': { addToExisting: false } });           // Save in 1Password saves at once, with no pick
+  await ticks(10);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'X', kind: 'create', options: CREATE });
+  c.emit({ type: 'approve', id: 'X', stage: 'prompt', title: '' });            // the user's click, and in the same turn the page's own messages
+  c.emit({ type: 'cancel', id: 'X' });
+  c.emit({ type: 'request', id: 'X', kind: 'create', options: CREATE });
+  await new Promise((r) => setTimeout(r, 80));
+  await ticks(20);
+  assert.equal(env.calls.autosave.length, 0);                                  // the aborted save is not sent under the newer request's name
+  assert.deepEqual(c.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['create-prompt', 'none', 'create-prompt']);
+  assert.equal(c.posted.filter((m) => m.type === 'reply').length, 0);
+  await c.send({ type: 'approve', id: 'X', stage: 'prompt', title: '' });      // Save on the newer card
+  await until(() => env.calls.autosave.length === 1, 'the newer save');
+  await until(() => c.card().state === 'create-saving', 'its saving card');
+  noErrors(env);
 });

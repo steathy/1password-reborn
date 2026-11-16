@@ -35,6 +35,9 @@
     let pickSeq = 0;             // numbers every start of a pick (getState().owner.pick)
 
     const keyOf = (port, id) => port.id + ':' + id;
+    // A record is live while it is the one registered under its key. The id in the key comes from
+    // the page, which can send it again: a record that has ended must never act for its successor.
+    const isLive = (rec) => pending.get(rec.key) === rec;
     const normId = (b64) => A.b64url.encode(A.b64url.decode(b64));
     const idOfEntry = (e) => A.b64url.encode(A.bytesFromUuid(e.credentialId));
 
@@ -47,13 +50,14 @@
     }
     // Retire ONE request. Only when it is the popup owner does the owner slot change.
     function retire(rec) {
-      if (!pending.has(rec.key)) return;
+      if (!isLive(rec)) return;
       clearT(rec.timer);
       pending.delete(rec.key);
       card(rec, 'none');
       if (owner === rec) { owner = null; promote(); }
     }
     function reply(rec, payload) {
+      if (!isLive(rec)) return;                          // it has ended: nothing more goes to the page under its id
       send(rec.port, Object.assign({ type: 'reply', id: rec.id }, payload));
       retire(rec);
     }
@@ -104,8 +108,14 @@
       if (!A.validateRpId(rec.rpId, host)) {
         return send(port, { type: 'reply', id: rec.id, error: { name: 'SecurityError', message: 'rpId is not valid for this origin' } });
       }
+      // A newer request on the same port and tab supersedes the earlier ones. One that comes under
+      // the key of a request that is still live (the page sent the id again) takes its place, and
+      // the earlier record is retired without a reply: the bridge knows a request by its id alone,
+      // and a reply under that id would make it drop the newer request's cards and the page's cancel.
       for (const other of Array.from(pending.values())) {
-        if (other.port === port && other.tabId === rec.tabId) failReq(other, 'NotAllowedError', 'superseded by a newer request');
+        if (other.port !== port || other.tabId !== rec.tabId) continue;
+        if (other.key === rec.key) retire(other);
+        else failReq(other, 'NotAllowedError', 'superseded by a newer request');
       }
       pending.set(rec.key, rec);
       rec.timer = setT(() => failReq(rec, 'NotAllowedError', 'timed out'), clampTimeout(options.timeout));
@@ -218,7 +228,7 @@
       let made;
       try { made = await A.makeCredential(rec.options, rec.origin, { uv: true }); }
       catch (e) { return failReq(rec, e.name || 'NotAllowedError', e.message); }
-      if (!pending.has(rec.key)) return;                 // retired while generating
+      if (!isLive(rec)) return;                          // retired while generating
       const payload = buildSavePayload(rec, made, login);
       // Spec create step 4: the recovery copy is stored BEFORE anything is sent. The adapter's
       // put is asynchronous and rejects on a storage error; neither the app save nor Done may
@@ -226,10 +236,10 @@
       try { await recovery.put(made.credentialId, payload); }
       catch (e) {
         log('error', 'recovery store failed', e);
-        if (pending.has(rec.key)) failReq(rec, 'NotAllowedError', 'could not store the passkey');
+        if (isLive(rec)) failReq(rec, 'NotAllowedError', 'could not store the passkey');
         return;
       }
-      if (!pending.has(rec.key)) return;                 // retired while storing: no app save; the stored copy stays until discarded
+      if (!isLive(rec)) return;                          // retired while storing: no app save; the stored copy stays until discarded
       if (!isConnected()) return card(rec, 'not-connected');   // the app went away meanwhile: the copy stays, Done stays inert
       rec.created = made;                                // only now can Done succeed
       autosave(payload.login, payload.collectedDocument, payload.url);
@@ -390,7 +400,7 @@
       let got;
       try { got = await A.getAssertion(rec.options, rec.origin, rec.passkey, { uv: true }); }
       catch (e) { return failReq(rec, e.name || 'NotAllowedError', e.message); }
-      if (!pending.has(rec.key) || owner !== rec) return;                 // retired meanwhile
+      if (!isLive(rec) || owner !== rec) return;                          // retired meanwhile
       reply(rec, { credential: assertionJson(got) });
     }
     function assertionJson(got) {
