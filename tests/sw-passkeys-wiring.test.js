@@ -215,8 +215,8 @@ test('the switch: stored off saves passkey-only at once; the menu checkbox shows
   let env = boot({ 'op4pk.settings': { addToExisting: false } });
   await ticks(10);
   const box = env.calls.menus.find((m) => m.id === 'op4pk-add-existing');
-  assert.deepEqual([box.type, box.checked, box.parentId, box.title], ['checkbox', false, 'op4pk-root', 'Add new passkeys to an existing login']);
-  assert.ok(env.calls.menus.some((m) => m.id === 'op4pk-sep' && m.type === 'separator'));
+  assert.deepEqual([box.type, box.checked, box.parentId, box.title], ['checkbox', false, undefined, 'Add new passkeys to an existing login']);   // at the top level
+  assert.equal(env.calls.menus.some((m) => m.type === 'separator' || m.id === 'op4pk-empty' || m.id === 'op4pk-root'), false);
   let c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
   await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
@@ -797,5 +797,80 @@ test('a popup that cannot be taken off the button is logged, and no window opens
   assert.deepEqual(env.calls.action.slice(1), [['setPopup', 'passkeys/options.html'], ['openPopup'], ['setPopup', '']]);
   assert.equal(warned(), 2);                           // after the opening
   assert.deepEqual(env.calls.windows, []);             // the popup did open: nothing else opens
+  noErrors(env);
+});
+
+/* ---------- reborn ports: the menu of the toolbar button (rulings B5, B6) ---------- */
+
+test('menu: Options… and the switch at the top level, always; "1Password passkeys" with Re-save and Discard all only while a copy is held', async () => {
+  const env = boot({ 'op4pk.settings': { addToExisting: false } });           // off: Save in 1Password saves at once
+  await ticks(10);
+  const rows = () => env.calls.menus.map((m) => [m.id, m.parentId, m.type, m.checked, m.title, m.contexts.join()]);
+  const options = ['op4pk-options', undefined, undefined, undefined, 'Options…', 'action'];
+  const add = ['op4pk-add-existing', undefined, 'checkbox', false, 'Add new passkeys to an existing login', 'action'];
+  assert.deepEqual(rows(), [options, add]);                                    // no submenu, no "No unsaved passkeys", no separator
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => env.calls.menus.length === 5, 'menu with a copy');
+  const id = Object.keys(env.store.session['op4pk.recovery'])[0];
+  const withCopy = [
+    options, add,
+    ['op4pk-root', undefined, undefined, undefined, '1Password passkeys', 'action'],
+    ['op4pk-resave:' + id, 'op4pk-root', undefined, undefined, 'Re-save [Passkey] webauthn.io - Alice', 'action'],
+    ['op4pk-discard', 'op4pk-root', undefined, undefined, 'Discard all', 'action'],
+  ];
+  assert.deepEqual(rows(), withCopy);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-resave:' + id });
+  await until(() => env.calls.autosave.length === 2, 're-save');
+  assert.deepEqual(env.calls.autosave[1], env.calls.autosave[0]);
+  env.chrome.contextMenus.removeAll();                                         // the engine reconnects and wipes the menus
+  await until(() => env.calls.menus.length === 5, 'menu rebuilt');
+  assert.deepEqual(rows(), withCopy);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-discard' });
+  await until(() => Object.keys(env.store.session['op4pk.recovery']).length === 0, 'copies discarded');
+  await until(() => env.calls.menus.length === 2, 'the two top-level entries are left');
+  assert.deepEqual(rows(), [options, add]);
+  assert.deepEqual(env.calls.action, [['setPopup', '']]);                      // nothing but the reset of the worker start: no click here opened the options
+  noErrors(env);
+});
+
+test('menu: rebuilt when a copy changed and when the switch changed, not on every recovery operation and not for the card style', async () => {
+  const env = boot({ 'op4pk.settings': { addToExisting: false } });
+  await ticks(10);
+  assert.equal(env.calls.rebuilds, 1);                                         // at the start
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => env.calls.menus.length === 5, 'menu with the new copy');
+  assert.equal(env.calls.rebuilds, 2);
+  const passkey = env.calls.autosave[0][0].collectedDocument.fields.find((f) => f.htmlName === 'passkey').value;   // what 1Password keeps and fills back
+  const fill = () => env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [{ action: 'fill', values: ['__op4pk', passkey] }] }] });
+  fill();                                                                      // seen in a fill: the copy is not needed any more
+  await until(() => env.calls.menus.length === 2, 'Re-save gone');
+  assert.equal(env.calls.rebuilds, 3);
+  assert.deepEqual(env.store.session['op4pk.recovery'], {});
+  fill();                                                                      // the same passkey again: no copy changed
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(env.calls.rebuilds, 3);                                         // the menu is left alone
+  env.chrome.storage.local.set({ 'op4pk.settings': { addToExisting: true } }, () => {});   // the options page turns the switch on
+  await until(() => env.calls.rebuilds === 4, 'rebuilt for the switch');
+  await ticks(10);
+  assert.equal(env.calls.menus.find((m) => m.id === 'op4pk-add-existing').checked, true);
+  env.chrome.storage.local.set({ 'op4pk.style': 'op7' }, () => {});           // the options page changes the card style
+  env.chrome.storage.local.set({ 'op4pk.settings': { addToExisting: true } }, () => {});   // and stores the switch as it is
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(env.calls.rebuilds, 4);                                         // neither rebuilds the menu
+  noErrors(env);
+});
+
+test('menu: the two top-level entries are there even when the copies cannot be read', async () => {
+  const env = boot({}, { sessionError: true });
+  await ticks(10);
+  assert.deepEqual(env.calls.menus.map((m) => [m.id, m.parentId]), [['op4pk-options', undefined], ['op4pk-add-existing', undefined]]);
+  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-read')).length, 1);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-add-existing', checked: false });   // the switch still works
+  await ticks(10);
+  assert.deepEqual(env.store.local['op4pk.settings'], { addToExisting: false });
   noErrors(env);
 });

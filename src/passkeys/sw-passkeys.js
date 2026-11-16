@@ -162,9 +162,11 @@
     }));
   let recoveryQueue = Promise.resolve();
   function mutateRecovery(mutate) {                   // mutate(all) → true when `all` changed
-    const run = recoveryQueue.then(async () => { const all = await sessionGet(); if (mutate(all)) await sessionSet(all); });
+    let changed = false;
+    const run = recoveryQueue.then(async () => { const all = await sessionGet(); changed = mutate(all) === true; if (changed) await sessionSet(all); });
     recoveryQueue = run.catch(() => {});              // one failure never blocks later operations
-    run.then(rebuildMenus, (e) => { console.warn(TAG, 'recovery store failed', e); rebuildMenus(); });
+    run.then(() => { if (changed) rebuildMenus(); },  // the menu lists the copies: rebuilt only when they changed
+      (e) => { console.warn(TAG, 'recovery store failed', e); rebuildMenus(); });
     return run;
   }
   const recovery = {
@@ -356,31 +358,32 @@
   // the popup off again.
   if (chrome.action && typeof chrome.action.setPopup === 'function') giveButtonBack();
 
-  /* ---------- context menu of the toolbar button: "Options…" at the top level; "1Password passkeys" → Add new passkeys to an existing login / Re-save <title> / Discard all ---------- */
+  /* ---------- context menu of the toolbar button: "Options…" and the switch "Add new passkeys to an existing login" at the top level, always; "1Password passkeys" → Re-save <title> / Discard all only while a recovery copy is held ---------- */
+  // Rebuilt at the start, after the engine wiped the menus, when a recovery copy changed, and
+  // when the switch changed (its mark then follows the options popup).
   const OPTIONS_ID = 'op4pk-options';
-  const ROOT_ID = 'op4pk-root';
   const ADD_ID = 'op4pk-add-existing';
+  const ROOT_ID = 'op4pk-root';
   const CONTEXTS = ['action'];
   let rebuilding = Promise.resolve();
   function rebuildMenus() {
     rebuilding = rebuilding.then(async () => {
       await settingsReady;
-      const all = await sessionGet();
+      let all = {};                                    // the two top-level entries are shown even when the copies cannot be read
+      try { all = await sessionGet(); }
+      catch (e) { console.warn(TAG, 'recovery store unreadable, the menu shows no copies:', (e && e.message) || e); }
       const gone = (id) => new Promise((resolve) => chrome.contextMenus.remove(id, () => { void chrome.runtime.lastError; resolve(); }));
       await gone(OPTIONS_ID);
+      await gone(ADD_ID);
       await gone(ROOT_ID);
       const done = () => void chrome.runtime.lastError;
       // at the top level, beside the engine's own "1Password"
       chrome.contextMenus.create({ id: OPTIONS_ID, title: 'Options\u2026', contexts: CONTEXTS }, done);
-      chrome.contextMenus.create({ id: ROOT_ID, title: '1Password passkeys', contexts: CONTEXTS }, done);
-      chrome.contextMenus.create({ id: ADD_ID, parentId: ROOT_ID, type: 'checkbox', checked: settings.addToExisting,
+      chrome.contextMenus.create({ id: ADD_ID, type: 'checkbox', checked: settings.addToExisting,
         title: 'Add new passkeys to an existing login', contexts: CONTEXTS }, done);
-      chrome.contextMenus.create({ id: 'op4pk-sep', parentId: ROOT_ID, type: 'separator', contexts: CONTEXTS }, done);
       const ids = Object.keys(all);
-      if (!ids.length) {
-        chrome.contextMenus.create({ id: 'op4pk-empty', parentId: ROOT_ID, title: 'No unsaved passkeys', enabled: false, contexts: CONTEXTS }, done);
-        return;
-      }
+      if (!ids.length) return;                         // nothing unsaved: no submenu
+      chrome.contextMenus.create({ id: ROOT_ID, title: '1Password passkeys', contexts: CONTEXTS }, done);
       for (const id of ids) {
         chrome.contextMenus.create({ id: 'op4pk-resave:' + id, parentId: ROOT_ID, title: 'Re-save ' + all[id].title, contexts: CONTEXTS }, done);
       }
