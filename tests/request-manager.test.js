@@ -831,3 +831,69 @@ test('the same id sent again while its request is live takes its place: the earl
   assert.deepEqual(told(p), ['card waiting', 'reply superseded by a newer request', 'card none', 'card waiting']);
   assert.equal(h.m.getState().owner.id, 'b');
 });
+
+/* ---------- reborn ports: only the visible tab opens the popup (design 7) ---------- */
+
+test('only the active tab of the focused window opens the popup: a sign-in or a pick elsewhere waits as busy and opens on activation', async () => {
+  const front = { tabId: 2, windowId: 10 };
+  // a sign-in on a known site from a background tab of the focused window
+  let h = harness({ index: indexWith(CRED) }); let bg = makePort(1, { id: 2, windowId: 10 }); const fg = makePort(2, { id: 1, windowId: 10 });
+  h.m.onConnect(bg); h.m.onConnect(fg);
+  bg.emit({ type: 'request', id: 'bg', kind: 'get', options: getOptions() });
+  assert.equal(bg.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);                                   // no popup over the tab in front
+  assert.equal(h.m.getState().owner, null);
+  fg.emit({ type: 'request', id: 'fg', kind: 'get', options: getOptions() });
+  assert.equal(fg.state(), 'waiting');                                       // the visible tab is served
+  assert.equal(h.m.getState().owner.id, 'fg');
+  fg.emit({ type: 'decline', id: 'fg', how: 'cancel' });
+  assert.equal(bg.state(), 'busy');                                          // a free slot alone does not open it
+  h.setActive(front); h.m.onTabActivated(front);
+  assert.equal(bg.state(), 'waiting');
+  assert.equal(h.m.getState().owner.id, 'bg');
+  assert.deepEqual(h.calls.showPopup, [PAGE, PAGE]);
+  // Yes on the first question of a sign-in (a site not seen before), clicked in a tab that is not in front
+  h = harness(); bg = makePort(1, { id: 2, windowId: 10 }); h.m.onConnect(bg);
+  bg.emit({ type: 'request', id: 'g', kind: 'get', options: getOptions() });
+  assert.equal(bg.state(), 'get-prompt');
+  bg.emit({ type: 'approve', id: 'g', stage: 'prompt' });
+  assert.equal(bg.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  h.setActive(front); h.m.onTabActivated(front);
+  assert.equal(bg.state(), 'waiting');
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
+  // a sign-in from the active tab of a window that does not have the focus
+  h = harness({ index: indexWith(CRED) }); const w2 = makePort(3, { id: 3, windowId: 20 }); h.m.onConnect(w2);
+  w2.emit({ type: 'request', id: 'w2', kind: 'get', options: getOptions() });
+  assert.equal(w2.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  h.setActive({ tabId: 3, windowId: 20 }); h.m.onWindowFocusChanged(20);
+  assert.equal(w2.state(), 'waiting');
+  // a sign-in while the active tab is not known
+  h = harness({ index: indexWith(CRED) }); const p = makePort(4, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  h.setActive(null);
+  p.emit({ type: 'request', id: 'r1', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  h.setActive({ tabId: 1, windowId: 10 }); h.m.onTabActivated({ tabId: 1, windowId: 10 });
+  assert.equal(p.state(), 'waiting');
+  // a save in a background tab shows its first card there; Save in 1Password from it waits with the pick until the tab is in front
+  h = pickHarness(); bg = makePort(1, { id: 2, windowId: 10 }); h.m.onConnect(bg);
+  bg.emit({ type: 'request', id: 'c', kind: 'create', options: createOptions() });
+  assert.equal(bg.state(), 'create-prompt');
+  bg.emit({ type: 'approve', id: 'c', stage: 'prompt', title: '' });
+  assert.equal(bg.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  assert.equal(h.m.getState().owner, null);
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com', password: 'hunter2', passkeys: [] }), false);   // fills in the visible tab stay ordinary fills
+  h.setActive(front); h.m.onTabActivated(front);
+  assert.equal(bg.state(), 'pick-login');
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
+  assert.deepEqual(h.m.getState().owner, { id: 'c', stage: 'pick-login', tabId: 2, origin: ORIGIN, pick: 1 });
+  // with the switch off a save needs no popup: it goes on in the background tab as before
+  h = harness(); bg = makePort(1, { id: 2, windowId: 10 }); h.m.onConnect(bg);
+  bg.emit({ type: 'request', id: 'c', kind: 'create', options: createOptions() });
+  bg.emit({ type: 'approve', id: 'c', stage: 'prompt', title: '' });
+  await until(() => bg.state() === 'create-saving', 'the save in the background tab');
+  assert.deepEqual(h.calls.showPopup, []);
+});
