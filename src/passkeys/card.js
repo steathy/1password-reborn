@@ -10,22 +10,26 @@
   'use strict';
 
   // What every style shares. All buttons of a card stand in one line at one width (that of the
-  // widest label), at the right, and the card is as wide as that line needs. The time left
-  // stands in the top line, and a bar along the bottom edge shrinks with it.
+  // widest label), at the right, and the card is as wide as that line needs; text wraps at
+  // 528 px instead of widening the card. The time left stands in the top line, and a bar along
+  // the bottom edge shrinks with it.
   const BASE = [
     ':host{all:initial;position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);font:14px/1.4 -apple-system,"Segoe UI",system-ui,sans-serif;color:#1b1b1f}',
-    '.box{box-sizing:border-box;position:relative;width:max-content;min-width:340px;max-width:min(560px,calc(100vw - 32px));background:#fff;border:1px solid #c9c9d1;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:14px 16px;max-height:calc(100vh - 32px);overflow:auto}',
+    '.box{box-sizing:border-box;position:relative;width:max-content;min-width:340px;max-width:calc(100vw - 32px);background:#fff;border:1px solid #c9c9d1;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:14px 16px;max-height:calc(100vh - 32px);overflow:auto}',
     '.brand{display:flex;justify-content:space-between;align-items:baseline;gap:16px;font-size:11px;font-weight:600;letter-spacing:.04em;color:#0a66c2;text-transform:uppercase;margin-bottom:6px}',
     '.cd{font-weight:400;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums;color:#6b7280}',
     '.cd.late{color:#c62828}',
     '.title{font-weight:600;margin-bottom:6px}',
     '.body{color:#52525b;margin-bottom:8px;word-break:break-word}',
-    '.row{display:flex;justify-content:flex-end}',
-    '.btns{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px}',
+    '.title,.body{max-width:528px}',
+    '.row{display:flex}',
+    // margin-left:auto, not justify-content:flex-end: a line too long for the card then overflows to
+    // the right, where the card can scroll, and never to the left, where it could not
+    '.btns{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;margin-left:auto}',
     'button{font:inherit;white-space:nowrap;padding:6px 12px;border-radius:6px;border:1px solid #c9c9d1;background:#f4f4f6;cursor:pointer}',
     '.bar{position:absolute;left:0;bottom:0;height:3px}',
     // a window too narrow for the line of buttons: they stack
-    '@media (max-width:520px){.box{width:auto;min-width:0}.row{display:block}.btns{grid-auto-flow:row}}',
+    '@media (max-width:540px){.box{width:auto;min-width:0}.row{display:block}.btns{grid-auto-flow:row;margin-left:0}}',
   ].join('');
 
   // The card styles: CSS on top of BASE, and the bar's first colour (it ends red in every style).

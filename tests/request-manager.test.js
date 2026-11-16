@@ -139,12 +139,12 @@ test('save: the offer card comes first; Update login opens the pick; a capture g
   assert.equal(h.timers[0].cleared, true);
 });
 
-test('save: New login gives a passkey-only login; default title without a display name; credProps echoed', async () => {
+test('save: the save button gives a passkey-only login without the popup; default title without a display name; credProps echoed', async () => {
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
   const o = createOptions({ extensions: { credProps: true } }); o.user = { ...o.user, displayName: '' };
   p.emit({ type: 'request', id: 'c1', kind: 'create', options: o });
   assert.deepEqual(p.last('card').card, { state: 'offer', site: 'Example', name: 'alice@example.com' });
-  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });       // New login: no pick, no popup
+  p.emit({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });       // the save button: no pick, no popup
   assert.equal(h.m.getState().owner, null);
   await until(() => p.last('reply'), 'reply');
   const { login, doc } = h.calls.autosave[0];
@@ -220,7 +220,7 @@ test('save: excludeCredentials is ignored', async () => {
   assert.equal(p.last('reply').error.name, 'NotAllowedError');              // a cancel is never an InvalidStateError
 });
 
-test("save: only the card's own choices approve (New login, Update login, then New login on the pick card); exits end the request", async () => {
+test("save: only the card's own choices approve (the save button, Update login, then the save button on the pick card); exits end the request", async () => {
   const h = harness();
   const p1 = makePort(1, { id: 1, windowId: 10 }); const p2 = makePort(2, { id: 2, windowId: 10 });
   h.m.onConnect(p1); h.m.onConnect(p2);
@@ -248,7 +248,7 @@ test("save: only the card's own choices approve (New login, Update login, then N
   assert.equal(h.calls.recoveryPut.length, 0);
   assert.deepEqual(h.calls.showPopup, [PAGE]);                                  // opened once, by Update login
   assert.equal(h.m.getState().owner.stage, 'pick-login');
-  p1.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });    // New login on the pick card: a change of mind
+  p1.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'new' });    // the save button on the pick card: a change of mind
   assert.equal(h.m.getState().owner, null);
   await until(() => p1.last('reply'), 'reply');
   assert.deepEqual(h.calls.autosave[0].doc.fields.map((f) => f.htmlName), ['username', 'passkey']);
@@ -717,7 +717,7 @@ test('promotion: on slot release with B active, on later activation, on window f
   assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
 });
 
-test('save: Update login waits as busy behind a sign-in; New login does not; promotion, tab change, timeout and abort', async () => {
+test('save: Update login waits as busy behind a sign-in; the save button does not; promotion, tab change, timeout and abort', async () => {
   let h = harness();
   const pA = makePort(1, { id: 1, windowId: 10 }); const pB = makePort(2, { id: 2, windowId: 10 });
   h.m.onConnect(pA); h.m.onConnect(pB);
@@ -741,7 +741,7 @@ test('save: Update login waits as busy behind a sign-in; New login does not; pro
   assert.equal(pB.last('reply').error.name, 'NotAllowedError');
   assert.equal(h.m.getState().owner, null);
   assert.equal(h.calls.recoveryPut.length, 0);
-  // New login needs no popup: a sign-in on another tab does not hold it up
+  // the save button needs no popup: a sign-in on another tab does not hold it up
   h = harness(); const qA = makePort(1, { id: 1, windowId: 10 }); const qB = makePort(2, { id: 2, windowId: 10 });
   h.m.onConnect(qA); h.m.onConnect(qB);
   qA.emit({ type: 'request', id: 'A', kind: 'get', options: getOptions() });
@@ -922,7 +922,7 @@ test('every card carries the request clock and the card style; a request never l
   p.emit({ type: 'decline', id: 'c1', how: 'cancel' });
   msg = p.last('card');
   assert.deepEqual([msg.card.state, msg.clock, msg.style], ['none', undefined, undefined]);
-  for (const [timeout, total] of [[undefined, 120000], [5000, 30000], [600000, 120000], [121000, 120000], [90000, 90000]]) {
+  for (const [timeout, total] of [[undefined, 120000], [5000, 30000], [600000, 120000], [121000, 120000], [90000, 90000], [45000.4, 45000]]) {
     h = harness({ options: { style: 'op7' } }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
     p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions(timeout === undefined ? {} : { timeout }) });
     assert.deepEqual(p.last('card').clock, { expires: T0 + total, total }, String(timeout));
@@ -949,4 +949,52 @@ test('every card carries the request clock and the card style; a request never l
     q.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
     assert.equal(q.state(), 'waiting', String(getOpts));
   }
+});
+
+test('the Sign in card: every ending leaves nothing behind; without its click nothing ever opens', async () => {
+  for (const ending of ['timeout', 'abort', 'cancel', 'fallback', 'supersede', 'disconnect', 'tabRemoved']) {
+    const h = harness({ options: { askSignIn: true } }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+    assert.equal(p.state(), 'ask', ending);
+    if (ending === 'timeout') h.timers[0].fn();
+    if (ending === 'abort') p.emit({ type: 'cancel', id: 'g1' });
+    if (ending === 'cancel') p.emit({ type: 'decline', id: 'g1', how: 'cancel' });
+    if (ending === 'fallback') p.emit({ type: 'decline', id: 'g1', how: 'fallback' });
+    if (ending === 'supersede') p.emit({ type: 'request', id: 'g2', kind: 'get', options: getOptions() });
+    if (ending === 'disconnect') p.disconnect();
+    if (ending === 'tabRemoved') h.m.onTabRemoved(1);
+    assert.deepEqual(h.calls.showPopup, [], ending);
+    assert.equal(h.m.getState().owner, null, ending);
+    assert.deepEqual(h.m.getState().pending.map((r) => r.id), ending === 'supersede' ? ['g2'] : [], ending);
+    assert.equal(h.timers[0].cleared, true, ending);
+    assert.equal(p.cards().filter((s) => s === 'none').length, 1, ending);
+  }
+  // an unclicked Sign in card is not a waiting request: tab and window changes never open it
+  const h = harness({ options: { askSignIn: true } }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  h.setActive({ tabId: 2, windowId: 10 }); h.m.onTabActivated({ tabId: 2, windowId: 10 });
+  h.setActive({ tabId: 1, windowId: 10 }); h.m.onTabActivated({ tabId: 1, windowId: 10 });
+  h.m.onWindowFocusChanged(20); h.m.onWindowFocusChanged(10);
+  assert.deepEqual(p.cards(), ['ask']);
+  assert.deepEqual(h.calls.showPopup, []);
+  assert.deepEqual(h.m.getState().pending, [{ id: 'g1', kind: 'get', stage: 'ask', tabId: 1 }]);
+});
+
+test('the clock and the style ride on every kind of card; the style is the one of the moment', async () => {
+  const T0 = 1700000000000;
+  let style = 'op7';
+  const m = createManager({ authenticator: A, recovery: { async put() {}, async remove() {} }, showPopup: () => {}, autosave: () => {},
+    isConnected: () => true, isPasskeyValue: FS.isPasskeyValue, getActive: () => ({ tabId: 1, windowId: 10 }),
+    setTimeout: () => ({}), clearTimeout: () => {}, now: () => T0, getOptions: () => ({ askSignIn: true, style }) });
+  const a = makePort(1, { id: 1, windowId: 10 }); const b = makePort(2, { id: 2, windowId: 10 });
+  m.onConnect(a); m.onConnect(b);
+  const frames = (p) => p.sent.filter((x) => x.type === 'card').map((x) => [x.card.state, x.clock && x.clock.total, x.clock && x.clock.expires - T0, x.style]);
+  a.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions({ timeout: 45000 }) });
+  a.emit({ type: 'approve', id: 'g1', stage: 'ask', choice: 'go' });
+  b.emit({ type: 'request', id: 'g2', kind: 'get', options: getOptions({ timeout: 60000 }) });
+  b.emit({ type: 'approve', id: 'g2', stage: 'ask', choice: 'go' });          // tab 2 is not the visible one: busy
+  style = 'op4';                                                             // the user switches the style meanwhile
+  m.handleFillItem({ item: { uuid: 'x', secureContents: { fields: [{ name: 'username', value: 'a', type: 'T' }] } } });   // no passkey: a notice for g1
+  assert.deepEqual(frames(a), [['ask', 45000, 45000, 'op7'], ['waiting', 45000, 45000, 'op7'], ['notice', 45000, 45000, 'op4']]);
+  assert.deepEqual(frames(b), [['ask', 60000, 60000, 'op7'], ['busy', 60000, 60000, 'op7']]);
 });

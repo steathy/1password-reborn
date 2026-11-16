@@ -23,14 +23,20 @@ async function until(pred, label) {
 function boot(local, opts = {}) {
   const logs = [];
   const rec = (level) => (...a) => logs.push({ level, text: a.map(String).join(' ') });
-  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [], storage: [] };
+  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [], storage: [], rebuilds: 0 };
   const store = { local: copy(local || {}), session: {} };
   // opts.asyncLocal: local.get answers later with a snapshot taken at call time (like chrome.storage);
-  // opts.localError: the callbacks of local.get and local.set run with chrome.runtime.lastError set.
+  // opts.localError: chrome.runtime.lastError is set in the callbacks of local.get and local.set (true),
+  //   of the first local.get only ('first-read'), or of local.set only ('write');
+  // opts.sessionError: the same for session.get; opts.localThrows: local.get throws.
+  let localReads = 0;
   const area = (name) => ({
     get: (k, cb) => {
       calls.storage.push([name, 'get', k]);
-      const bad = name === 'local' && opts.localError;
+      if (name === 'local' && opts.localThrows) throw new Error('storage unavailable');
+      const bad = name === 'local'
+        ? opts.localError === true || (opts.localError === 'first-read' && localReads++ === 0)
+        : opts.sessionError === true;
       const snap = bad ? {} : copy({ [k]: store[name][k] });
       const run = () => { if (bad) chrome.runtime.lastError = { message: 'boom-read' }; try { cb(snap); } finally { chrome.runtime.lastError = undefined; } };
       if (name === 'local' && opts.asyncLocal) setTimeout(run, 5); else run();
@@ -39,7 +45,7 @@ function boot(local, opts = {}) {
       calls.storage.push([name, 'set', Object.keys(o).join()]);
       Object.assign(store[name], copy(o));
       if (!cb) return;
-      if (name === 'local' && opts.localError) chrome.runtime.lastError = { message: 'boom-write' };
+      if (name === 'local' && (opts.localError === true || opts.localError === 'write')) chrome.runtime.lastError = { message: 'boom-write' };
       try { cb(); } finally { chrome.runtime.lastError = undefined; }
     },
   });
@@ -50,7 +56,7 @@ function boot(local, opts = {}) {
     windows: { WINDOW_ID_NONE: -1, onFocusChanged: listener() },
     contextMenus: {
       create: (o, cb) => { calls.menus.push(copy(o)); if (cb) cb(); },
-      remove: (id, cb) => { calls.menus = []; if (cb) cb(); },
+      remove: (id, cb) => { calls.rebuilds++; calls.menus = []; if (cb) cb(); },
       removeAll: (cb) => { calls.menus = []; if (cb) cb(); },
       onClicked: listener(),
     },
@@ -270,6 +276,10 @@ test('save, then sign in with what was saved: one pick each; the fill that shows
   assert.deepEqual(g.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['waiting', 'none']);   // no confirm card
   await until(() => env.calls.menus.length === 7, 'Re-save gone');              // seen in a fill: the copy is not needed any more
   assert.deepEqual(env.store.session['op4pk.recovery'], {});
+  const rebuilds = env.calls.rebuilds;
+  env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [{ action: 'fill', values: ['__op4pk', passkey] }] }] });   // the same passkey again, no request waiting
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(env.calls.rebuilds, rebuilds);                                  // no copy changed: the menu is left alone
   noErrors(env);
 });
 
@@ -293,7 +303,7 @@ test('a save in a background tab shows its card there; Update login from it wait
   noErrors(env);
 });
 
-test('a request id sent again right behind the New login click never strands the popup: other tabs keep filling and signing in', async () => {
+test('a request id sent again right behind the save click never strands the popup: other tabs keep filling and signing in', async () => {
   const env = boot();
   await ticks(5);
   const c = connect(env);
@@ -372,7 +382,8 @@ test("storage: only this edition's options key is read and written; the other ed
   assert.equal(g.card().state, 'waiting');
   env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-style:op4', checked: true });
   await ticks(10);
-  assert.deepEqual(env.calls.storage.filter((x) => x[0] === 'local'), [['local', 'get', 'op4pk.plain'], ['local', 'set', 'op4pk.plain']]);
+  assert.deepEqual(env.calls.storage.filter((x) => x[0] === 'local'),
+    [['local', 'get', 'op4pk.plain'], ['local', 'get', 'op4pk.plain'], ['local', 'set', 'op4pk.plain']]);   // the start, then the click: a fresh read and the write
   assert.deepEqual(env.store.local, { ...other, 'op4pk.plain': { updateLogin: false, askSignIn: false, style: 'op4' } });
   assert.ok(env.calls.storage.some((x) => x[0] === 'session' && x[1] === 'set' && x[2] === 'op4pk.recovery'));
   noErrors(env);
@@ -430,7 +441,53 @@ test('options: stored values apply; a click is stored and applies to the next ca
   assert.deepEqual(ticked(env), ['op4pk-style:reborn']);
   env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-opt:askSignIn', checked: true });
   await ticks(10);
-  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-write')).length, 1);
+  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('options not saved')).length, 1);
+  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: true, style: 'op7' });   // unreadable: nothing is written over it
+  assert.equal(env.calls.storage.filter((x) => x[0] === 'local' && x[1] === 'set').length, 0);
+  noErrors(env);
+  // a write that fails is logged
+  env = boot({}, { localError: 'write' });
+  await ticks(10);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-opt:askSignIn', checked: true });
+  await ticks(10);
+  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('options not saved') && l.text.includes('boom-write')).length, 1);
+  noErrors(env);
+});
+
+test('options: after a failed first read a click keeps what is stored and changes only what was clicked', async () => {
+  const env = boot({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op7' } }, { localError: 'first-read' });
+  await ticks(10);
+  assert.deepEqual(env.calls.menus.filter((m) => m.checked).map((m) => m.id), ['op4pk-style:reborn']);   // this run uses the defaults
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-style:op4', checked: true });
+  await ticks(10);
+  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: true, style: 'op4' });
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.deepEqual([c.card().state, c.last('card').style], ['waiting', 'op4']);   // the click applies; the rest of this run stays at the defaults
+  noErrors(env);
+});
+
+test('options: a storage call that throws counts as the defaults and holds nothing up', async () => {
+  const env = boot({}, { localThrows: true });
+  await ticks(10);
+  assert.equal(env.calls.menus.length, 7);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.equal(c.card().state, 'waiting');
+  assert.equal(c.last('card').style, 'reborn');
+  assert.ok(env.logs.some((l) => l.level === 'warn' && l.text.includes('options unreadable')));
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-style:op7', checked: true });
+  await ticks(10);
+  assert.ok(env.logs.some((l) => l.level === 'warn' && l.text.includes('options not saved')));
+  noErrors(env);
+});
+
+test('menu: the options are there even when the copies cannot be read', async () => {
+  const env = boot({}, { sessionError: true });
+  await ticks(10);
+  assert.deepEqual(env.calls.menus.map((m) => m.id),
+    ['op4pk-root', 'op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-sep-style', 'op4pk-style:reborn', 'op4pk-style:op4', 'op4pk-style:op7']);
+  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-read')).length, 1);
   noErrors(env);
 });
 

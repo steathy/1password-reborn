@@ -165,7 +165,7 @@ test('the card is a full-viewport modal with a centred box', () => {
   assert.equal(t.card.state, 'pick-login');
 });
 
-test('nothing of the removed cards is left: no input, no notes, no title editor, no blue approve button', () => {
+test('nothing of the removed cards is left: no input, no notes, no title editor, no approve button', () => {
   const { card } = setup();
   for (const [state, data] of STATES) {
     for (const style of ['reborn', 'op4', 'op7']) {
@@ -192,11 +192,19 @@ test('all buttons of a card stand in one line at one width, at the right', () =>
     assert.ok(Array.from(groups[0].children).every((el) => el.tagName === 'BUTTON'), state);
   }
   const css = card._root.querySelector('style').textContent;
-  assert.ok(css.includes('.btns{display:grid;grid-auto-flow:column;grid-auto-columns:1fr'));   // one line, equal columns
-  assert.ok(css.includes('.row{display:flex;justify-content:flex-end}'));                      // at the right
+  assert.ok(css.includes('.btns{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;margin-left:auto}'));   // one line, equal columns, at the right
+  assert.ok(css.includes('.row{display:flex}'));
   assert.ok(/button\{[^}]*white-space:nowrap/.test(css));                                      // a label never breaks
-  assert.ok(/\.box\{[^}]*width:max-content/.test(css));                                        // the card is as wide as the line needs
-  assert.ok(/@media \(max-width:520px\)\{[^@]*\.btns\{grid-auto-flow:row\}/.test(css));        // a narrow window stacks them
+  assert.ok(/\.box\{[^}]*width:max-content;min-width:340px;max-width:calc\(100vw - 32px\)/.test(css));   // as wide as the line needs, within the window
+  assert.ok(css.includes('.title,.body{max-width:528px}'));                                    // long text wraps instead of widening the card
+  assert.ok(/\.box\{[^}]*max-height:calc\(100vh - 32px\);overflow:auto/.test(css));          // a low or narrow window: the card scrolls inside
+  assert.ok(/@media \(max-width:540px\)\{[^@]*\.btns\{grid-auto-flow:row;margin-left:0\}/.test(css));   // a narrow window stacks the buttons
+  // the two other styles change the look only: the button line and the bounds of the box stay those of the shared rules
+  for (const s of ['op4', 'op7']) {
+    assert.ok(!/\.(row|btns)\{[^}]*(display|grid-auto|justify-content|margin-left|flex)/.test(STYLES[s].css), s);
+    assert.ok(!/\.box\{[^}]*(width|max-height|overflow)/.test(STYLES[s].css), s);
+    assert.ok(!/white-space|@media/.test(STYLES[s].css), s);
+  }
 });
 
 test('the countdown: the time in the top line and a bar that shrinks; both red from a third left; it stops with the card', () => {

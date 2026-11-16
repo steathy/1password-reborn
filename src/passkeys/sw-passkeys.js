@@ -50,23 +50,44 @@
   const OPTIONS_KEY = 'op4pk.plain';
   const STYLES = RM.STYLES;
   const options = { updateLogin: false, askSignIn: false, style: STYLES[0] };
-  const touched = new Set();                          // options clicked before the stored values were read: the click wins
-  const optionsReady = new Promise((resolve) =>
-    chrome.storage.local.get(OPTIONS_KEY, (r) => {
-      if (chrome.runtime.lastError) console.warn(TAG, 'options unreadable, the defaults apply:', chrome.runtime.lastError.message || chrome.runtime.lastError);
-      const s = (r && r[OPTIONS_KEY]) || {};
-      if (!touched.has('updateLogin') && typeof s.updateLogin === 'boolean') options.updateLogin = s.updateLogin;
-      if (!touched.has('askSignIn') && typeof s.askSignIn === 'boolean') options.askSignIn = s.askSignIn;
-      if (!touched.has('style') && STYLES.includes(s.style)) options.style = s.style;
-      resolve();
-    }));
-  // The new value applies at once; it is written after the stored values were read, so that a
-  // click which beat the read does not write the defaults over the other stored options.
+  const touched = new Set();                          // the options the user has clicked in this worker run
+  // done(stored, failed): what is stored, valid values only, and why it could not be read (else null).
+  function readOptions(done) {
+    const validOf = (s) => {
+      const o = {};
+      if (s && typeof s === 'object') {
+        if (typeof s.updateLogin === 'boolean') o.updateLogin = s.updateLogin;
+        if (typeof s.askSignIn === 'boolean') o.askSignIn = s.askSignIn;
+        if (STYLES.includes(s.style)) o.style = s.style;
+      }
+      return o;
+    };
+    try {
+      chrome.storage.local.get(OPTIONS_KEY, (r) => {
+        const err = chrome.runtime.lastError;
+        done(err ? {} : validOf(r && r[OPTIONS_KEY]), err ? (err.message || String(err)) : null);
+      });
+    } catch (e) { done({}, (e && e.message) || String(e)); }
+  }
+  const optionsReady = new Promise((resolve) => readOptions((stored, failed) => {
+    if (failed) console.warn(TAG, 'options unreadable, the defaults apply:', failed);
+    for (const name of Object.keys(stored)) if (!touched.has(name)) options[name] = stored[name];   // a click that beat the read wins
+    resolve();
+  }));
+  // The new value applies at once. It is written over a fresh read of what is stored, changing
+  // only what was clicked in this run: neither a click that beat the first read nor one that
+  // follows a failed read writes defaults over the other stored options.
   function setOption(name, value) {
     touched.add(name);
     options[name] = value;
-    optionsReady.then(() => chrome.storage.local.set({ [OPTIONS_KEY]: options }, () => {
-      if (chrome.runtime.lastError) console.warn(TAG, 'options not saved, the choice is lost on restart:', chrome.runtime.lastError.message || chrome.runtime.lastError);
+    const lost = (why) => console.warn(TAG, 'options not saved, the choice is lost on restart:', why);
+    optionsReady.then(() => readOptions((stored, failed) => {
+      if (failed) return lost(failed);
+      const next = Object.assign({ updateLogin: false, askSignIn: false, style: STYLES[0] }, stored);
+      for (const n of touched) next[n] = options[n];
+      try {
+        chrome.storage.local.set({ [OPTIONS_KEY]: next }, () => { const err = chrome.runtime.lastError; if (err) lost(err.message || String(err)); });
+      } catch (e) { lost((e && e.message) || String(e)); }
     }));
   }
   // Requests are handled only once the options and the focused window's active tab are known, so
@@ -93,9 +114,11 @@
     }));
   let recoveryQueue = Promise.resolve();
   function mutateRecovery(mutate) {                   // mutate(all) → true when `all` changed
-    const run = recoveryQueue.then(async () => { const all = await sessionGet(); if (mutate(all)) await sessionSet(all); });
+    let changed = false;
+    const run = recoveryQueue.then(async () => { const all = await sessionGet(); changed = mutate(all) === true; if (changed) await sessionSet(all); });
     recoveryQueue = run.catch(() => {});              // one failure never blocks later operations
-    run.then(rebuildMenus, (e) => { console.warn(TAG, 'recovery store failed', e); rebuildMenus(); });
+    run.then(() => { if (changed) rebuildMenus(); },  // the menu lists the copies: rebuilt only when they changed
+      (e) => { console.warn(TAG, 'recovery store failed', e); rebuildMenus(); });
     return run;
   }
   const recovery = {
@@ -258,7 +281,9 @@
   function rebuildMenus() {
     rebuilding = rebuilding.then(async () => {
       await optionsReady;
-      const all = await sessionGet();
+      let all = {};                                    // the options are shown even when the copies cannot be read
+      try { all = await sessionGet(); }
+      catch (e) { console.warn(TAG, 'recovery store unreadable, the menu shows no copies:', (e && e.message) || e); }
       await new Promise((resolve) => chrome.contextMenus.remove(ROOT_ID, () => { void chrome.runtime.lastError; resolve(); }));
       const done = () => void chrome.runtime.lastError;
       const item = (o) => chrome.contextMenus.create(Object.assign({ parentId: ROOT_ID, contexts: CONTEXTS }, o), done);

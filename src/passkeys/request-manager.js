@@ -77,7 +77,7 @@
     function clampTimeout(t) {
       const n = Number(t);
       const ms = Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
-      return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, ms));
+      return Math.round(Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, ms)));
     }
 
     /* ---------- intake ---------- */
