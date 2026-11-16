@@ -148,3 +148,15 @@ test("the countdown runs from the worker's deadline and stops when the request e
     assert.equal(p.intervals.size, 0, ending);
   }
 });
+
+test("the worker's card style reaches the card: the style of each card message, Reborn without one", () => {
+  const p = page();
+  p.fromPage({ op4pk: 1, dir: 'req', id: 'r1', kind: 'get', options: {} });
+  p.fromWorker({ type: 'card', id: 'r1', card: { state: 'get-prompt', site: 'example.com' }, clock: clock(), style: 'op7' });
+  assert.ok(p.view().css.includes('background:#374456'));                    // the 1Password 7 style
+  p.fromWorker({ type: 'card', id: 'r1', card: { state: 'waiting' }, clock: clock(), style: 'op4' });
+  assert.ok(p.view().css.includes('linear-gradient(#565c62,#292c30)') && !p.view().css.includes('background:#374456'));
+  p.fromWorker({ type: 'card', id: 'r1', card: { state: 'busy' } });         // a message without a style
+  assert.ok(!p.view().css.includes('#374456') && !p.view().css.includes('#565c62'));
+  assert.equal(p.view().state, 'busy');
+});

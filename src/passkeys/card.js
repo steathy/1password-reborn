@@ -50,8 +50,54 @@
   ].join('');
 
   // The card styles: CSS on top of BASE, and the bar's first colour (it ends red in every style).
+  // The 1Password 4 and 1Password 7 styles follow those programs for Windows. The main button of
+  // a card is its 'approve' button in every style, and the styles' button rules apply to the line
+  // of buttons only (.btns button), so the icon buttons of the title note keep their look. Their
+  // box has no padding, so the title box and the notes get side margins and a min-width that
+  // leaves room for them.
   const STYLES = {
     reborn: { bar: [10, 102, 194], css: '' },
+    // 1Password 4: the white-to-grey dialog body, the toolbar grey as caption, the charcoal button
+    // bar and the square Windows buttons of its Login and Preferences windows; the main button
+    // has the blue frame of a default button.
+    op4: { bar: [24, 139, 255], css: [
+      ':host{font:12px/1.4 "Segoe UI",Tahoma,sans-serif;color:#000}',
+      '.box{padding:0;border:1px solid #6b6b6b;border-radius:0;background:linear-gradient(#fdfdfd,#e4e4e4);box-shadow:0 6px 22px rgba(0,0,0,.45)}',
+      '.brand{margin:0;padding:6px 10px;background:linear-gradient(#f7f7f7,#d7d7d7);border-bottom:1px solid #a9a9a9;color:#000;font-size:12px;letter-spacing:0;text-transform:none}',
+      '.cd{color:#444}',
+      '.title{margin:12px 12px 4px;font-weight:700}',
+      '.body{margin:0 12px;color:#333}',
+      'input,.note{min-width:calc(100% - 24px);margin:10px 12px 0}',
+      'input{padding:3px 6px;border:1px solid #7a7a7a;border-radius:0;background:#fff}',
+      'input:focus{outline:none;border-color:#0078d7}',
+      '.note{border-radius:0;background:#fff4ce;border:1px solid #e6cf7c;border-left:3px solid #e0a100;color:#000}',
+      '.ptitle.editing .t{border-color:#0078d7;border-radius:0}',
+      '.row{margin-top:14px;padding:9px 10px 11px;background:linear-gradient(#565c62,#292c30)}',
+      '.btns{gap:6px}',
+      '.btns button{padding:3px 12px;border-radius:0;border:1px solid #adadad;background:#e1e1e1;color:#000}',
+      '.btns button:hover{background:#e5f1fb;border-color:#0078d7}',
+      '.btns button[data-action=approve]{border-color:#0078d7;box-shadow:inset 0 0 0 1px #0078d7}',
+    ].join('') },
+    // 1Password 7: a white panel, the navy of its sidebar as caption, its rounded buttons and the
+    // blue of its switches, which fills the main button.
+    op7: { bar: [74, 140, 211], css: [
+      ':host{color:#1c1c1c}',
+      '.box{padding:0;border:1px solid #c3c9d1;border-radius:6px;box-shadow:0 10px 30px rgba(20,30,45,.35)}',
+      '.brand{margin:0;padding:9px 14px;background:#374456;color:#fff;font-size:13px;letter-spacing:0;text-transform:none}',
+      '.cd{color:#c7d0db}',
+      '.cd.late{color:#ff8078}',
+      '.title{margin:14px 14px 4px;font-size:15px}',
+      '.body{margin:0 14px;color:#6b6b6b}',
+      'input,.note{min-width:calc(100% - 28px);margin:10px 14px 0}',
+      'input{padding:5px 8px;border:1px solid #c6c6c6;border-radius:4px}',
+      'input:focus{outline:none;border-color:#4a8cd3;box-shadow:0 0 0 2px rgba(74,140,211,.25)}',
+      '.note{background:#fdf6dd;color:#1c1c1c}',
+      '.ptitle.editing .t{border-color:#4a8cd3}',
+      '.row{margin-top:14px;padding:10px 14px 13px;background:#f9f9f9;border-top:1px solid #e5e5e5}',
+      '.btns button{padding:5px 14px;border-radius:4px;border:1px solid #c6c6c6;background:#fff;color:#1c1c1c}',
+      '.btns button:hover{border-color:#4a8cd3}',
+      '.btns button[data-action=approve]{background:#4a8cd3;border-color:#4a8cd3;color:#fff}',
+    ].join('') },
   };
 
   // The countdown. The bar keeps its style's colour down to BLEND of the time left, is red at
@@ -278,7 +324,7 @@
       if (s === 'none') { if (host.parentNode) host.parentNode.removeChild(host); return; }
       const spec = TEXT[s](d || {});
       const f = frame || {};
-      const look = STYLES.reborn;
+      const look = Object.prototype.hasOwnProperty.call(STYLES, f.style) ? STYLES[f.style] : STYLES.reborn;
       const style = doc.createElement('style'); style.textContent = BASE + look.css; shadow.appendChild(style);
       const box = doc.createElement('div'); box.className = 'box';
       const brand = doc.createElement('div'); brand.className = 'brand';
@@ -343,5 +389,5 @@
     return { show: render, hide: () => render('none'), host, get state() { return state; }, _root: shadow };
   }
 
-  return { createCard, TEXT };
+  return { createCard, TEXT, STYLES };
 });

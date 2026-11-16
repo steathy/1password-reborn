@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
-const { createCard, TEXT } = require(path.join(__dirname, '..', 'src', 'passkeys', 'card.js'));
+const { createCard, TEXT, STYLES } = require(path.join(__dirname, '..', 'src', 'passkeys', 'card.js'));
+const RM = require(path.join(__dirname, '..', 'src', 'passkeys', 'request-manager.js'));
 
 function setup(opts = {}) {
   const dom = new JSDOM('<!doctype html><html><body><p>page</p></body></html>', { url: 'https://login.example.com/' });
@@ -485,4 +486,70 @@ test('the countdown paints the time and the bar only: a title being edited and a
   assert.equal(s.card._root.querySelector('.brand .cd').textContent, '0:30');
   button(s.card, 'Save in 1Password').click();
   assert.deepEqual(s.calls.approve, [['prompt', { title: 'Work GitHub' }]]);
+});
+
+/* ---------- reborn ports: the three card styles (design 3) ---------- */
+
+test('three card styles: Reborn unless asked otherwise; 1Password 4 and 1Password 7 add their own CSS and bar colour', () => {
+  const look = (style) => {
+    const t = setup();
+    t.card.show('pick-mismatch', { login: 'bob', account: 'alice' }, { style, clock: { expires: 1000 + 60000, total: 60000 } });
+    return { css: t.card._root.querySelector('style').textContent, bar: t.card._root.querySelector('.bar').style.backgroundColor,
+      late: (() => { t.advance(50000); t.tick(); return t.card._root.querySelector('.cd').className; })() };
+  };
+  const reborn = look('reborn'), none = look(undefined), odd = look('neon'), proto = look('constructor'), op4 = look('op4'), op7 = look('op7');
+  assert.equal(none.css, reborn.css);
+  assert.equal(odd.css, reborn.css);
+  assert.equal(proto.css, reborn.css);                                          // an inherited name is no style
+  for (const x of [op4, op7]) assert.ok(x.css.startsWith(reborn.css) && x.css.length > reborn.css.length);
+  assert.ok(op4.css.includes('linear-gradient(#565c62,#292c30)'));              // the charcoal button bar of 1Password 4
+  assert.ok(op4.css.includes('border-radius:0'));                               // its square buttons
+  assert.ok(op7.css.includes('background:#374456'));                            // the navy of 1Password 7's sidebar
+  assert.ok(op7.css.includes('#4a8cd3'));                                       // the blue of its switches
+  assert.notEqual(op4.css, op7.css);
+  assert.deepEqual([reborn.bar, op4.bar, op7.bar], ['rgb(10, 102, 194)', 'rgb(24, 139, 255)', 'rgb(74, 140, 211)']);
+  assert.deepEqual([reborn.late, op4.late, op7.late], ['cd late', 'cd late', 'cd late']);
+  assert.ok(op7.css.includes('.cd.late{color:#ff8078}'));                       // a red that reads on the navy caption
+  assert.deepEqual(Object.keys(STYLES).sort(), [...RM.STYLES].sort());          // the manager and the card know the same styles
+  assert.equal(RM.STYLES[0], 'reborn');
+  assert.equal(STYLES.reborn.css, '');
+});
+
+test('the styles change the look only: the line of buttons, the bounds of the box, the main button and the fit of title box and notes hold in each', () => {
+  for (const s of ['op4', 'op7']) {
+    const css = STYLES[s].css;
+    // the line of buttons and the bounds of the box stay those of the shared rules
+    assert.ok(!/\.(row|btns)\{[^}]*(display|grid-auto|justify-content|margin-left|flex)/.test(css), s);
+    assert.ok(!/\.box\{[^}]*(width|max-height|overflow)/.test(css), s);
+    assert.ok(!/white-space|@media/.test(css), s);
+    // button rules apply to the line of buttons only, so the icon buttons of the title note keep their look
+    assert.ok(!/(^|\})button[{:[]/.test(css), s);
+    assert.ok(/(^|\})\.btns button\{/.test(css), s);
+    // the main button is the approve button; no rule for the first 'choose' button
+    assert.ok(/(^|\})\.btns button\[data-action=approve\]\{/.test(css), s);
+    assert.ok(!css.includes('data-action=choose'), s);
+    assert.ok(!css.includes(':disabled'), s);                                   // the shared rule keeps disabled buttons dimmed
+    // the title box and the notes keep the shared width:0, so they never widen the card; each style gives them its own look
+    assert.ok(!/[{;]width:/.test(css), s);
+    assert.ok(/(^|\})input\{[^}]*border:1px solid #/.test(css) && /(^|\})\.note\{[^}]*background:#/.test(css), s);
+    assert.ok(/(^|\})input:focus\{[^}]*border-color:#/.test(css) && /(^|\})\.ptitle\.editing \.t\{border-color:#/.test(css), s);
+  }
+  assert.ok(STYLES.op4.css.includes('.btns button[data-action=approve]{border-color:#0078d7;box-shadow:inset 0 0 0 1px #0078d7}'));   // the blue frame of a default button
+  assert.ok(STYLES.op7.css.includes('.btns button[data-action=approve]{background:#4a8cd3;border-color:#4a8cd3;color:#fff}'));       // filled blue
+  // these two styles' box has no padding: title box and notes take the card's width less their side margins
+  assert.ok(STYLES.op4.css.includes('.box{padding:0;') && STYLES.op4.css.includes('input,.note{min-width:calc(100% - 24px);margin:10px 12px 0}'));
+  assert.ok(STYLES.op7.css.includes('.box{padding:0;') && STYLES.op7.css.includes('input,.note{min-width:calc(100% - 28px);margin:10px 14px 0}'));
+  // rendered: every card keeps its one line of buttons, its title box and its notes in every style
+  const { card } = setup();
+  for (const style of ['reborn', 'op4', 'op7']) {
+    for (const [state, data, sends] of CARDS) {
+      card.show(state, data, { style });
+      assert.equal(card._root.querySelectorAll('.row > .btns > button').length, sends.length, state + ' in ' + style);
+    }
+    card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: T }, { style });
+    assert.equal(card._root.querySelectorAll('.box > input').length, 1, style);
+    card.show('create-saving', { app7: true, combined: true, title: T }, { style });
+    assert.equal(card._root.querySelectorAll('.box > .note').length, 3, style);                // two notes and the title note
+    assert.ok(card._root.querySelector('style').textContent.endsWith(STYLES[style].css), style);
+  }
 });
