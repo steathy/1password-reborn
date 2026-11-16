@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
-## [1.8.0-1p7] - unreleased
+## [1.8.0-1p7] - 2026-11-16
 
 1Password 7 edition, branch `1pass7` (1Password 7 for Windows only). It takes over six designs of
 the plain edition (1.7.0-plain); its own flows (the pick, the card about a different account,
