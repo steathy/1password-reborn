@@ -49,6 +49,28 @@
     '.row button:disabled{opacity:.45;cursor:default}',
   ].join('');
 
+  // The card styles: CSS on top of BASE, and the bar's first colour (it ends red in every style).
+  const STYLES = {
+    reborn: { bar: [10, 102, 194], css: '' },
+  };
+
+  // The countdown. The bar keeps its style's colour down to BLEND of the time left, is red at
+  // LATE (a third left) and deepens to a deep red at zero. From LATE on the time is red as well.
+  const BLEND = 0.38;
+  const LATE = 1 / 3;
+  const RED = [198, 40, 40];
+  const DEEP = [130, 16, 16];
+  const mix = (a, b, t) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
+  function barColour(first, frac) {
+    if (frac >= BLEND) return first;
+    if (frac > LATE) return mix(first, RED, (BLEND - frac) / (BLEND - LATE));
+    return mix(RED, DEEP, (LATE - frac) / LATE);
+  }
+  function clockText(ms) {
+    const s = Math.ceil(ms / 1000);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
   // [action, label, approvedStage?, choice?]. 'choose' is a secondary-looking button that approves
   // with a choice, like 'approve'. Note segments are [text, bold].
   // Update existing writes only the username and the password into the login selected there
@@ -166,6 +188,10 @@
     let input = null;
     let editing = false;
     let copyTimer = null;
+    const every = opts.setInterval || ((fn, ms) => doc.defaultView.setInterval(fn, ms));
+    const stop = opts.clearInterval || ((h) => doc.defaultView.clearInterval(h));
+    // the countdown's interval while a card with a clock shows
+    let ticking = null;
 
     // The proposed-title note: edit in place (row buttons disabled meanwhile) and copy.
     function titleNote(initial, rowBtns) {
@@ -240,17 +266,24 @@
       return n;
     }
 
-    function render(s, d) {
+    // frame = { clock: { expires, total }, style }: the request's deadline and whole time in
+    // milliseconds, and the card style of the moment. Both may be missing.
+    function render(s, d, frame) {
       state = s;
       shadow.textContent = '';
       input = null;
       editing = false;
       clearTimeout(copyTimer);
+      if (ticking !== null) { stop(ticking); ticking = null; }
       if (s === 'none') { if (host.parentNode) host.parentNode.removeChild(host); return; }
       const spec = TEXT[s](d || {});
-      const style = doc.createElement('style'); style.textContent = BASE; shadow.appendChild(style);
+      const f = frame || {};
+      const look = STYLES.reborn;
+      const style = doc.createElement('style'); style.textContent = BASE + look.css; shadow.appendChild(style);
       const box = doc.createElement('div'); box.className = 'box';
-      const brand = doc.createElement('div'); brand.className = 'brand'; brand.textContent = '1Password passkeys'; box.appendChild(brand);
+      const brand = doc.createElement('div'); brand.className = 'brand';
+      const brandName = doc.createElement('span'); brandName.textContent = '1Password passkeys'; brand.appendChild(brandName);
+      box.appendChild(brand);
       const h = doc.createElement('div'); h.className = 'title'; h.textContent = spec.title; box.appendChild(h);
       if (spec.body) { const b = doc.createElement('div'); b.className = 'body'; b.textContent = spec.body; box.appendChild(b); }
       for (const segs of spec.notes || []) {
@@ -285,6 +318,23 @@
         btns.appendChild(btn); rowBtns.push(btn);
       });
       box.appendChild(row);
+      // The countdown is painted into the time and the bar only, four times a second. It never
+      // renders the card again, so a title that is being edited or typed is not disturbed.
+      const clock = f.clock;
+      if (clock && Number.isFinite(clock.expires) && clock.total > 0) {
+        const cd = doc.createElement('span'); brand.appendChild(cd);
+        const bar = doc.createElement('div'); bar.className = 'bar'; box.appendChild(bar);
+        const paint = () => {
+          const left = Math.min(clock.total, Math.max(0, clock.expires - nowMs()));
+          const frac = left / clock.total;
+          cd.textContent = clockText(left);
+          cd.className = frac <= LATE ? 'cd late' : 'cd';
+          bar.style.width = (100 * frac).toFixed(1) + '%';
+          bar.style.backgroundColor = 'rgb(' + barColour(look.bar, frac).join(', ') + ')';
+        };
+        paint();
+        ticking = every(paint, 250);
+      }
       shadow.appendChild(box);
       if (!host.parentNode) (doc.body || doc.documentElement).appendChild(host);
       armedAt = nowMs() + armDelayMs;
