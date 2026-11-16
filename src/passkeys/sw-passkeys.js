@@ -84,26 +84,63 @@
       for (const rpId of Object.keys(early)) for (const e of early[rpId]) index.add(rpId, e);
       resolve();
     }));
-  /* ---------- settings: chrome.storage.local['op4pk.settings'] = { addToExisting } (default on) ---------- */
-  let settings = { addToExisting: true };
-  let settingsTouched = false;                        // a switch click that beat the read wins over the stored value
-  const settingsReady = new Promise((resolve) =>
-    chrome.storage.local.get('op4pk.settings', (r) => {
-      if (chrome.runtime.lastError) console.warn(TAG, 'settings unreadable, the switch counts as on:', chrome.runtime.lastError.message || chrome.runtime.lastError);
-      const s = r && r['op4pk.settings'];
-      if (!settingsTouched && s && typeof s.addToExisting === 'boolean') settings = { addToExisting: s.addToExisting };
-      resolve();
-    }));
+  /* ---------- settings: one key per option in chrome.storage.local ---------- */
+  // 'op4pk.settings' = { addToExisting }: "Add new passkeys to an existing login", on unless stored
+  // as false; written whole by the switch in the button's menu (setAddToExisting below) and by the
+  // options page (passkeys/options.html). 'op4pk.style' = 'reborn' | 'op4' | 'op7': the card
+  // style, Reborn unless one of the three names is stored; only the options page writes it. One
+  // key per option, so that no write carries another option's value. The worker reads both keys
+  // in one call at the start and then follows every change of each key, its own write included.
+  const SETTINGS_KEY = 'op4pk.settings';
+  const STYLE_KEY = 'op4pk.style';
+  const STYLES = RM.STYLES;
+  const settings = { addToExisting: true, style: STYLES[0] };
+  let settingsTouched = false;                        // a switch click, or a change of the key, that beat the first read wins over the value read
+  let styleTouched = false;                           // so does a change of the style
+  const settingsReady = new Promise((resolve) => {
+    const unreadable = (why) => { console.warn(TAG, 'settings unreadable, the defaults apply:', why); resolve(); };
+    try {
+      chrome.storage.local.get([SETTINGS_KEY, STYLE_KEY], (r) => {
+        const err = chrome.runtime.lastError;
+        if (err) return unreadable(err.message || String(err));
+        const s = r && r[SETTINGS_KEY];
+        if (!settingsTouched && s && typeof s.addToExisting === 'boolean') settings.addToExisting = s.addToExisting;
+        if (!styleTouched && r && STYLES.includes(r[STYLE_KEY])) settings.style = r[STYLE_KEY];
+        resolve();
+      });
+    } catch (e) { unreadable((e && e.message) || String(e)); }
+  });
+  if (chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return;
+      if (changes[SETTINGS_KEY]) {
+        settingsTouched = true;
+        const s = changes[SETTINGS_KEY].newValue;
+        if (s && typeof s.addToExisting === 'boolean' && s.addToExisting !== settings.addToExisting) {
+          settings.addToExisting = s.addToExisting;
+          rebuildMenus();                             // the mark of the menu's switch follows
+        }
+      }
+      if (changes[STYLE_KEY]) {
+        styleTouched = true;
+        if (STYLES.includes(changes[STYLE_KEY].newValue)) settings.style = changes[STYLE_KEY].newValue;
+      }
+    });
+  }
+  // The switch in the button's menu, as before: the click applies at once and its key is written
+  // whole. Nothing is read first. A write that fails is logged and the choice holds for this run
+  // of the worker. The write comes back through onChanged like one of the options page.
   function setAddToExisting(on) {
     settingsTouched = true;
-    settings = { addToExisting: on === true };
-    chrome.storage.local.set({ 'op4pk.settings': settings }, () => {
+    settings.addToExisting = on === true;
+    chrome.storage.local.set({ [SETTINGS_KEY]: { addToExisting: settings.addToExisting } }, () => {
       if (chrome.runtime.lastError) console.warn(TAG, 'settings not saved, the choice is lost on restart:', chrome.runtime.lastError.message || chrome.runtime.lastError);
     });
   }
-  // Requests are handled only once the persisted index, the switch, the focused tab and the focus are
-  // known, so the first request after a worker start honours persisted exclusions and positive
-  // matches (spec: Create step 3; Chrome storage docs: "asynchronous preload from storage").
+  // Requests are handled only once the persisted index, the settings, the focused tab and the focus
+  // are known, so the first request after a worker start honours persisted exclusions and positive
+  // matches (spec: Create step 3; Chrome storage docs: "asynchronous preload from storage") and is
+  // shown the way the user chose.
   const ready = Promise.all([indexReady, activeReady, focusReady, settingsReady]);
 
   /* ---------- recovery store: chrome.storage.session['op4pk.recovery'] (cleared when the browser closes, or when the extension is updated, reloaded or disabled) ---------- */
