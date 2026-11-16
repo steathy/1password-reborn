@@ -236,3 +236,110 @@ describe('install.ps1: Firefox for each edition', { skip: SKIP }, () => {
     assert.match(R[11].Error, /Missing .*1password-reborn-firefox-plain\.xpi/);
   });
 });
+
+const TAGS = { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' };
+const INSTALL = 'C:\\op4-test-install';
+const MARKER = INSTALL + '\\.release';
+const confirm = (edition, hasOP4, op7, answers) => ({ fn: 'confirm', edition, hasOP4, op7, answers });
+const flow = (edition, extra = {}) => ({ fn: 'payload-flow', edition, tags: TAGS, lookupOk: true, installDir: INSTALL, payloadRoot: '', paths: [], files: {}, ...extra });
+const staged = (marker, edition) => ({ paths: [MARKER, ...under(INSTALL, FILES[edition])], files: { [MARKER]: marker } });
+const trimmed = (r) => r.Prompts.map((p) => p.trim());
+const flat = (s) => s.replace(/\s+/g, ' ');                                   // the installer wraps long texts
+
+describe('install.ps1: the screens and the flow of the one installer', { skip: SKIP }, () => {
+  let R;
+  before(() => {
+    R = runCases([
+      /* 0 */ confirm('1p7', false, '7.9.834', []),
+      /* 1 */ confirm('1p7', true, null, ['']),
+      /* 2 */ confirm('1p7', true, null, ['y']),
+      /* 3 */ confirm('plain', false, '7.9.834', ['yes']),
+      /* 4 */ confirm('plain', false, '7.9.834', ['y']),
+      /* 5 */ confirm('plain', false, '7.9.834', ['']),
+      /* 6 */ confirm('plain', true, null, ['y', 'yes']),
+      /* 7 */ confirm('plain', true, null, ['']),
+      /* 8 */ confirm('main', false, '7.9.836', ['']),
+      /* 9 */ { fn: 'edition-menu', tags: TAGS, hasOP4: false, op7: '7.9.834', mark: '1p7', stagedLine: 'installed: Plain edition 1.7.0-plain', lookupOk: true, answers: [''] },
+      /* 10 */ { fn: 'edition-menu', tags: TAGS, hasOP4: false, op7: '7.9.836', mark: '', stagedLine: '', lookupOk: false, answers: ['0'] },
+      /* 11 */ { fn: 'mode-menu', edition: '1p7', payload: 'C:\\op4-test-payload', answers: ['2', '5', '9'] },
+      /* 12 */ { fn: 'mode-menu', edition: 'main', payload: 'C:\\op4-test-payload', answers: ['3', '', '0'] },
+      /* 13 */ { fn: 'mode-menu', edition: 'plain', payload: 'C:\\op4-test-payload', answers: ['0'] },
+      /* 14 */ flow('1p7', staged('1p7 v1.8.0-1p7', '1p7')),
+      /* 15 */ flow('1p7', staged('1p7 v1.6.0-1p7', '1p7')),
+      /* 16 */ flow('1p7', staged('plain v1.7.0-plain', 'plain')),
+      /* 17 */ flow('1p7', { ...staged('1p7 v1.6.0-1p7', '1p7'), lookupOk: false }),
+      /* 18 */ flow('1p7', { lookupOk: false }),
+      /* 19 */ flow('main', { payloadRoot: 'C:\\op4-test-root', paths: under('C:\\op4-test-root', FILES.main) }),
+      /* 20 */ { fn: 'elevate', payload: 'C:\\op4-test-payload', mode: 'force', edition: 'main' },
+      /* 21 */ { fn: 'init', ok: true, releases: [rel('v1.5.0'), rel('v1.8.0-1p7')] },
+      /* 22 */ { fn: 'init', ok: false },
+      /* 23 */ { fn: 'warning-lines' },
+    ]);
+  });
+
+  it('an edition that fits goes straight on; one that does not fit asks "Continue anyway? [y/N]" with its reason', () => {
+    assert.deepEqual([R[0].Ok, trimmed(R[0])], [true, []]);
+    assert.equal(R[1].Ok, false);
+    assert.match(R[1].Output, /1Password 7 edition: does not fit this PC\./);
+    assert.match(flat(R[1].Output), /only 1Password 4 was found/);
+    assert.deepEqual(trimmed(R[1]), ['Continue anyway? [y/N]']);
+    assert.equal(R[2].Ok, true);
+    assert.equal(R[8].Ok, false);
+    assert.match(flat(R[8].Output), /7\.9\.834 is the last release that serves it/);
+  });
+  it('the plain edition shows its warning every time and goes on only for yes, after the app gate', () => {
+    assert.equal(R[3].Ok, true);
+    assert.match(R[3].Output, /Plain edition - for experienced users only/);
+    assert.match(R[3].Output, /If in doubt, choose the 1Password 7 edition/);
+    assert.deepEqual(trimmed(R[3]), ['Type yes to install the plain edition (anything else goes back)']);
+    assert.deepEqual([R[4].Ok, R[5].Ok], [false, false]);
+    assert.equal(R[6].Ok, true);
+    assert.deepEqual(trimmed(R[6]), ['Continue anyway? [y/N]', 'Type yes to install the plain edition (anything else goes back)']);
+    assert.equal(R[7].Ok, false);
+    assert.doesNotMatch(R[7].Output, /experienced users/);                 // no warning after a no at the gate
+  });
+  it("the warning's lines fit the panel", () => {
+    assert.ok(R[23].length >= 10);
+    for (const l of R[23]) assert.ok(l.length <= 62, l);
+  });
+  it('the edition menu shows the app, the staged edition, notes, the rows and the Enter default', () => {
+    for (const s of ['found: 1Password 7.9.834', 'installed: Plain edition 1.7.0-plain', 'Which edition?', '1Password 7 edition',
+      '1.8.0-1p7', 'password and passkey in one login', 'fits', 'Quit']) assert.ok(R[9].Output.includes(s), s);
+    assert.deepEqual([R[9].Answer, trimmed(R[9])], ['', ['Choose (Enter = [2])']]);
+    assert.match(R[10].Output, /Couldn't read GitHub's releases/);
+    assert.match(flat(R[10].Output), /7\.9\.834 is the last release/);
+    assert.match(R[10].Output, /does not fit/);
+    assert.deepEqual(trimmed(R[10]), ['Choose']);
+  });
+  it("an edition's menu: no Force install outside Reborn, Uninstall restarts with admin rights without a download, 9 and 0 leave", () => {
+    assert.deepEqual([R[11].Result, R[11].Started], ['back', []]);
+    assert.equal(R[12].Result, 'quit');
+    assert.equal(R[12].Started.length, 1);
+    assert.match(R[12].Started[0].args, /-File ".+install\.ps1" -Mode uninstall$/);
+    assert.match(R[12].Output, /Requesting administrator rights/);
+    assert.equal(R[13].Result, 'quit');
+    assert.match(R[13].Output, /Other editions/);
+    assert.doesNotMatch(R[13].Output, /Force install/);
+  });
+  it('the files: the cache when current, a download of a newer release or another edition (with the reload hint), the cache or the built-in tag when GitHub cannot be read', () => {
+    assert.deepEqual([R[14].Payload, R[14].Saved], [INSTALL, []]);
+    assert.match(R[14].Output, /Cached download is current \(v1\.8\.0-1p7\)/);
+    assert.deepEqual(R[15].Saved, ['1p7 v1.8.0-1p7']);
+    assert.doesNotMatch(R[15].Output, /Edition changed/);
+    assert.deepEqual(R[16].Saved, ['1p7 v1.8.0-1p7']);
+    assert.match(flat(R[16].Output), /Edition changed: Plain edition -> 1Password 7 edition/);
+    assert.deepEqual([R[17].Payload, R[17].Saved], [INSTALL, []]);
+    assert.match(R[17].Output, /Couldn't read GitHub's releases - using the cached download \(v1\.6\.0-1p7\)\./);
+    assert.deepEqual(R[18].Saved, ['1p7 v1.8.0-1p7']);
+    assert.match(R[18].Output, /Couldn't read GitHub's releases - using v1\.8\.0-1p7\./);
+    assert.deepEqual([R[19].Payload, R[19].Saved], ['C:\\op4-test-root', []]);
+  });
+  it('the elevated restart runs this installer with the mode, the edition and the staged files', () => {
+    assert.equal(R[20].Started.length, 1);
+    assert.match(R[20].Started[0].args, /-File ".+install\.ps1" -Mode force -Edition main -PayloadRoot "C:\\op4-test-payload"$/);
+  });
+  it('one look at the release list per run sets the tags and whether the list could be read', () => {
+    assert.deepEqual(R[21], { LookupOk: true, Tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' } });
+    assert.deepEqual(R[22], { LookupOk: false, Tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' } });
+  });
+});
