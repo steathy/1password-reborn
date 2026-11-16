@@ -9,16 +9,31 @@
 })(typeof self !== 'undefined' ? self : globalThis, function () {
   'use strict';
 
-  const CSS = [
+  // What every style shares. All buttons of a card stand in one line at one width (that of the
+  // widest label), at the right, and the card is as wide as that line needs; title and body wrap
+  // at 528 px instead of widening the card, and the title box and the notes take the card's
+  // width and never widen it (width:0 with min-width:100%). The line is pushed right by
+  // margin-left:auto, not justify-content:flex-end: a line too long for the card then overflows
+  // to the right, where the card can scroll, and never to the left, where it could not. A window
+  // of 540 px or narrower stacks the buttons. The rules for .cd and .bar are the countdown's:
+  // the time left in the top line and the bar along the bottom edge.
+  const BASE = [
     ':host{all:initial;position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);font:14px/1.4 -apple-system,"Segoe UI",system-ui,sans-serif;color:#1b1b1f}',
-    '.box{box-sizing:border-box;width:340px;max-width:calc(100vw - 32px);background:#fff;border:1px solid #c9c9d1;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:14px 16px;max-height:calc(100vh - 32px);overflow:auto}',
-    '.brand{font-size:11px;font-weight:600;letter-spacing:.04em;color:#0a66c2;text-transform:uppercase;margin-bottom:6px}',
+    '.box{box-sizing:border-box;position:relative;width:max-content;min-width:340px;max-width:calc(100vw - 32px);background:#fff;border:1px solid #c9c9d1;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:14px 16px;max-height:calc(100vh - 32px);overflow:auto}',
+    '.brand{display:flex;justify-content:space-between;align-items:baseline;gap:16px;font-size:11px;font-weight:600;letter-spacing:.04em;color:#0a66c2;text-transform:uppercase;margin-bottom:6px}',
+    '.cd{font-weight:400;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums;color:#6b7280}',
+    '.cd.late{color:#c62828}',
     '.title{font-weight:600;margin-bottom:6px}',
     '.body{color:#52525b;margin-bottom:8px;word-break:break-word}',
-    'input{box-sizing:border-box;width:100%;font:inherit;padding:6px 8px;border:1px solid #c9c9d1;border-radius:6px;margin-bottom:10px}',
-    '.row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}',
-    'button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid #c9c9d1;background:#f4f4f6;cursor:pointer}',
+    '.title,.body{max-width:528px}',
+    'input,.note{display:block;box-sizing:border-box;width:0;min-width:100%}',
+    'input{font:inherit;padding:6px 8px;border:1px solid #c9c9d1;border-radius:6px;margin-bottom:10px}',
+    '.row{display:flex}',
+    '.btns{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;margin-left:auto}',
+    'button{font:inherit;white-space:nowrap;padding:6px 12px;border-radius:6px;border:1px solid #c9c9d1;background:#f4f4f6;cursor:pointer}',
     'button[data-action=approve]{background:#0a66c2;border-color:#0a66c2;color:#fff}',
+    '.bar{position:absolute;left:0;bottom:0;height:3px}',
+    '@media (max-width:540px){.box{width:auto;min-width:0}.row{display:block}.btns{grid-auto-flow:row;margin-left:0}}',
     '.note{background:#fff8e1;border-left:3px solid #e0a100;color:#3f3a2a;padding:6px 8px;border-radius:4px;margin-bottom:10px}',
     '.ptitle .head{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:20px}',
     '.ptitle .t{display:block;margin:2px -6px 0;padding:3px 5px;border:1px solid transparent;border-radius:4px;font-weight:600;word-break:break-word;outline:none;cursor:text}',
@@ -233,7 +248,7 @@
       clearTimeout(copyTimer);
       if (s === 'none') { if (host.parentNode) host.parentNode.removeChild(host); return; }
       const spec = TEXT[s](d || {});
-      const style = doc.createElement('style'); style.textContent = CSS; shadow.appendChild(style);
+      const style = doc.createElement('style'); style.textContent = BASE; shadow.appendChild(style);
       const box = doc.createElement('div'); box.className = 'box';
       const brand = doc.createElement('div'); brand.className = 'brand'; brand.textContent = '1Password passkeys'; box.appendChild(brand);
       const h = doc.createElement('div'); h.className = 'title'; h.textContent = spec.title; box.appendChild(h);
@@ -253,6 +268,7 @@
       const rowBtns = [];
       if (spec.proposedTitle) box.appendChild(titleNote(spec.proposedTitle, rowBtns));
       const row = doc.createElement('div'); row.className = 'row';
+      const btns = doc.createElement('div'); btns.className = 'btns'; row.appendChild(btns);
       spec.buttons.forEach(([action, label, stage, choice]) => {
         const btn = doc.createElement('button');
         btn.type = 'button'; btn.textContent = label; btn.dataset.action = action;
@@ -266,7 +282,7 @@
             onApprove(stage, extra);
           } else onDecline(action);                // 'fallback' | 'cancel'
         });
-        row.appendChild(btn); rowBtns.push(btn);
+        btns.appendChild(btn); rowBtns.push(btn);
       });
       box.appendChild(row);
       shadow.appendChild(box);
