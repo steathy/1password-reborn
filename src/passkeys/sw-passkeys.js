@@ -43,6 +43,28 @@
     activeKnown();
   });
 
+  /* ---------- focus: whether a browser window has the focus right now ---------- */
+  // focusedWindowId (above) keeps the last focused browser window also while 1Password's popup or
+  // another application is in front, because the request that owns the popup is checked against
+  // that remembered tab. browserFocused is the real focus: no after windows.onFocusChanged
+  // (WINDOW_ID_NONE), yes after a focus event that names a window (below). Only a new popup and a
+  // promotion ask for it (the manager's hasFocus). At a worker start the browser is asked; an
+  // answer that cannot be read counts as focused, so that an API failure never blocks a sign-in,
+  // and a focus event that arrived before the answer is the newer one.
+  let browserFocused = true;
+  let focusEventSeen = false;
+  const focusReady = new Promise((resolve) => {
+    const unreadable = (why) => { console.warn(TAG, 'focus unreadable, the browser counts as focused:', why); resolve(); };
+    try {
+      chrome.windows.getLastFocused({}, (w) => {
+        const err = chrome.runtime.lastError;
+        if (err) return unreadable(err.message || String(err));
+        if (!focusEventSeen && w && w.focused === false) browserFocused = false;
+        resolve();
+      });
+    } catch (e) { unreadable((e && e.message) || String(e)); }
+  });
+
   /* ---------- index: chrome.storage.local['op4pk.index'], mirrored in memory ---------- */
   let indexData = {};
   const index = {
@@ -79,10 +101,10 @@
       if (chrome.runtime.lastError) console.warn(TAG, 'settings not saved, the choice is lost on restart:', chrome.runtime.lastError.message || chrome.runtime.lastError);
     });
   }
-  // Requests are handled only once the persisted index, the switch and the focused tab are known, so
-  // the first request after a worker start honours persisted exclusions and positive matches
-  // (spec: Create step 3; Chrome storage docs: "asynchronous preload from storage").
-  const ready = Promise.all([indexReady, activeReady, settingsReady]);
+  // Requests are handled only once the persisted index, the switch, the focused tab and the focus are
+  // known, so the first request after a worker start honours persisted exclusions and positive
+  // matches (spec: Create step 3; Chrome storage docs: "asynchronous preload from storage").
+  const ready = Promise.all([indexReady, activeReady, focusReady, settingsReady]);
 
   /* ---------- recovery store: chrome.storage.session['op4pk.recovery'] (cleared when the browser closes, or when the extension is updated, reloaded or disabled) ---------- */
   // Every operation is a read-modify-write of one object, so they run one at a time through a
@@ -138,6 +160,7 @@
     // WebSocket). The engine exports the class and keeps its current connection in Agent.c.
     isNativeApp: () => typeof self.NativeMessagingConnection === 'function' && Agent.c instanceof self.NativeMessagingConnection,
     getActive,
+    hasFocus: () => browserFocused,
     getSettings: () => settings,
     isPasskeyValue: FS.isPasskeyValue,
     log: (level, ...args) => (level === 'error' ? console.error : console.warn)(TAG, ...args),
@@ -252,7 +275,11 @@
     manager.onTabActivated(tab);                                   // the owner-only rule keys on the owner's own window
   });
   chrome.windows.onFocusChanged.addListener((windowId) => {
-    if (windowId === chrome.windows.WINDOW_ID_NONE) return;        // the 1Password popup itself took focus
+    focusEventSeen = true;
+    // No browser window has the focus: 1Password's popup took it, or another application. The
+    // remembered window and tab stay as they are (the owner's fill check needs them); nothing new opens.
+    if (windowId === chrome.windows.WINDOW_ID_NONE) { browserFocused = false; return; }
+    browserFocused = true;
     focusedWindowId = windowId;
     manager.onWindowFocusChanged(windowId);                        // retire an owner in another window NOW; promotion waits for the tab below
     chrome.tabs.query({ active: true, windowId }, (tabs) => {

@@ -44,7 +44,17 @@ function boot(local, opts = {}) {
     runtime: { lastError: undefined, onConnect: listener() },
     storage: { local: area('local'), session: area('session') },
     tabs: { query: (q, cb) => cb([{ id: 5, windowId: 1 }]), onActivated: listener(), onRemoved: listener() },
-    windows: { WINDOW_ID_NONE: -1, onFocusChanged: listener() },
+    // opts.lastFocused: what the browser says about the focus at a worker start (default: window 1 has it);
+    // opts.focusError: that answer comes with chrome.runtime.lastError; opts.focusThrows: asking throws;
+    // opts.lateFocus: the answer comes a moment later
+    windows: { WINDOW_ID_NONE: -1, onFocusChanged: listener(), getLastFocused: (q, cb) => {
+      if (opts.focusThrows) throw new Error('windows unavailable');
+      const run = () => {
+        if (opts.focusError) chrome.runtime.lastError = { message: 'boom-focus' };
+        try { cb(opts.focusError ? undefined : copy(opts.lastFocused || { id: 1, focused: true })); } finally { chrome.runtime.lastError = undefined; }
+      };
+      if (opts.lateFocus) setTimeout(run, 5); else run();
+    } },
     contextMenus: {
       create: (o, cb) => { calls.menus.push(copy(o)); if (cb) cb(); },
       remove: (id, cb) => { calls.menus = []; if (cb) cb(); },
@@ -359,5 +369,95 @@ test('a request from a background tab waits: no popup, the visible tab fills as 
   await ticks(10);
   assert.equal(bg.card().state, 'pick-login');
   assert.equal(env.calls.popup, 1);
+  noErrors(env);
+});
+
+/* ---------- reborn ports: the real focus (review finding R2) ---------- */
+
+const KNOWN = { 'op4pk.index': { 'webauthn.io': [{ credentialId: 'd0a4b7a6-5d1e-4a9f-9b1a-0a4c2a6f1e2b', userName: 'alice', seenAt: 1 }] } };
+
+test('no browser window has the focus: a sign-in on a known site waits as busy with no popup and opens when the focus returns', async () => {
+  const env = boot(KNOWN);
+  await ticks(5);
+  env.chrome.windows.onFocusChanged.fns[0](env.chrome.windows.WINDOW_ID_NONE);   // the user goes to another application
+  const c = connect(env);                                                        // the tab that was in front last
+  await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.equal(c.card().state, 'busy');
+  assert.equal(env.calls.popup, 0);
+  env.chrome.tabs.onActivated.fns[0]({ tabId: 5, windowId: 1 });                 // a tab event without the focus opens nothing
+  await ticks(10);
+  assert.equal(c.card().state, 'busy');
+  assert.equal(env.calls.popup, 0);
+  env.chrome.windows.onFocusChanged.fns[0](1);                                   // back in the browser
+  await ticks(10);
+  assert.equal(c.card().state, 'waiting');
+  assert.equal(env.calls.popup, 1);
+  noErrors(env);
+});
+
+test('the request that owns the popup keeps its fill while 1Password has the focus', async () => {
+  const env = boot({ 'op4pk.settings': { addToExisting: false } });           // a save without a pick first, to have a passkey that 1Password fills back
+  await ticks(5);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => env.calls.autosave.length === 1, 'save');
+  const passkey = env.calls.autosave[0][0].collectedDocument.fields.find((f) => f.htmlName === 'passkey').value;
+  await until(() => c.card().state === 'create-saving', 'saving card');
+  await c.send({ type: 'approve', id: 'c1', stage: 'saving' });                // Done: the site is a known one now
+  await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.equal(c.card().state, 'waiting');
+  assert.equal(env.calls.popup, 1);
+  env.chrome.windows.onFocusChanged.fns[0](env.chrome.windows.WINDOW_ID_NONE);   // 1Password's popup takes the focus
+  env.sandbox.Agent.Fa(page());
+  assert.deepEqual(env.calls.collected.at(-1).pageDetails[0].fields.map((f) => f.opid), ['__0', '__op4pw', '__op4pk']);   // the sign-in fields still go to the owner's tab
+  env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [
+    { action: 'fill', values: ['__0', 'alice@example.com'] }, { action: 'fill', values: ['__op4pk', passkey] }] }] });
+  assert.deepEqual(env.calls.executed.at(-1).scripts[0].script, {});          // consumed: nothing is typed
+  await until(() => c.card().state === 'confirm', 'the last question');       // the fill check passed on the remembered tab
+  env.chrome.windows.onFocusChanged.fns[0](1);                                 // the user clicks into the page
+  await c.send({ type: 'approve', id: 'g1', stage: 'confirm' });
+  await until(() => c.posted.some((m) => m.type === 'reply' && m.id === 'g1'), 'assertion');
+  assert.ok(c.posted.find((m) => m.type === 'reply' && m.id === 'g1').credential);
+  noErrors(env);
+});
+
+test('a worker start asks the browser for the focus: unfocused, a request waits; an answer that cannot be read counts as focused; a focus event that came first is the newer one', async () => {
+  const signIn = async (env) => { const c = connect(env); await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET }); return c; };
+  // the worker starts while the browser is not in front
+  let env = boot(KNOWN, { lastFocused: { id: 1, focused: false } });
+  await ticks(5);
+  let c = await signIn(env);
+  assert.equal(c.card().state, 'busy');
+  assert.equal(env.calls.popup, 0);
+  env.chrome.windows.onFocusChanged.fns[0](1);
+  await ticks(10);
+  assert.equal(c.card().state, 'waiting');
+  assert.equal(env.calls.popup, 1);
+  noErrors(env);
+  // the focus cannot be read, or asking throws: it counts as focused, so that a failure never blocks a sign-in
+  for (const trouble of [{ focusError: true }, { focusThrows: true }]) {
+    const label = JSON.stringify(trouble);
+    env = boot(KNOWN, trouble);
+    await ticks(5);
+    c = await signIn(env);
+    assert.equal(c.card().state, 'waiting', label);
+    assert.equal(env.calls.popup, 1, label);
+    assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('focus unreadable')).length, 1, label);
+    noErrors(env);
+  }
+  // the answer comes late and says unfocused, but a focus event arrived meanwhile: the event is the newer one
+  env = boot(KNOWN, { lastFocused: { id: 1, focused: false }, lateFocus: true });
+  env.chrome.windows.onFocusChanged.fns[0](1);
+  await new Promise((r) => setTimeout(r, 40));
+  c = await signIn(env);
+  assert.equal(c.card().state, 'waiting');
+  // and the other way round: the late answer says focused, the event meanwhile said that no window has the focus
+  env = boot(KNOWN, { lateFocus: true });
+  env.chrome.windows.onFocusChanged.fns[0](env.chrome.windows.WINDOW_ID_NONE);
+  await new Promise((r) => setTimeout(r, 40));
+  c = await signIn(env);
+  assert.equal(c.card().state, 'busy');
+  assert.equal(env.calls.popup, 0);
   noErrors(env);
 });

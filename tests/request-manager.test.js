@@ -39,6 +39,7 @@ function harness(opts = {}) {
   const indexData = opts.index || {};
   let active = opts.active || { tabId: 1, windowId: 10 };
   let connected = opts.connected !== false;
+  let focus = opts.focused !== false;                   // whether a browser window has the focus
   // The recovery fakes are asynchronous like the chrome.storage adapter; a test can hold or fail the write.
   const gate = { hold: null, fail: null };
   // opts.signGate: an assertion is signed only once this promise has settled, and fails if it
@@ -65,11 +66,12 @@ function harness(opts = {}) {
     getSettings: () => ({ addToExisting: opts.addToExisting === true }),
     isPasskeyValue: FS.isPasskeyValue,
     getActive: () => active,
+    hasFocus: () => focus,
     setTimeout: (fn, ms) => { const h = { fn, ms, cleared: false }; timers.push(h); return h; },
     clearTimeout: (h) => { if (h) h.cleared = true; },
     now: () => 1700000000000,
   });
-  return { m, calls, timers, indexData, gate, setActive: (a) => { active = a; }, setConnected: (c) => { connected = c; } };
+  return { m, calls, timers, indexData, gate, setActive: (a) => { active = a; }, setConnected: (c) => { connected = c; }, setFocus: (f) => { focus = f; } };
 }
 
 async function until(pred, label) {
@@ -896,4 +898,85 @@ test('only the active tab of the focused window opens the popup: a sign-in or a 
   bg.emit({ type: 'approve', id: 'c', stage: 'prompt', title: '' });
   await until(() => bg.state() === 'create-saving', 'the save in the background tab');
   assert.deepEqual(h.calls.showPopup, []);
+});
+
+/* ---------- reborn ports: a popup opens only while a browser window has the focus (review finding R2) ---------- */
+
+test('no browser window has the focus: a sign-in or a pick waits as busy with no popup and opens when the focus returns; the owner is not touched', async () => {
+  const v = await vaultItem();
+  const here = { tabId: 1, windowId: 10 };
+  // a sign-in on a known site, started by the page while the user is in another application
+  let h = harness({ index: indexWith(v.made.credentialId), focused: false }); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  assert.equal(h.m.getState().owner, null);
+  let sent = p.sent.length;
+  h.m.onTabActivated(here);                                                  // a tab event alone promotes nothing while the focus is away
+  assert.equal(p.sent.length, sent);
+  assert.deepEqual(h.calls.showPopup, []);
+  h.setFocus(true); h.m.onWindowFocusChanged(10);                            // the focus returns
+  assert.equal(p.state(), 'waiting');
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
+  // the request that owns the popup is not touched: 1Password's popup has the focus now, and its fill is still taken
+  h.setFocus(false);
+  assert.equal(h.m.handleFillItem({ item: v.copy() }), true);
+  await until(() => p.state() === 'confirm', 'confirm card');
+  h.setFocus(true);
+  p.emit({ type: 'approve', id: 'g1', stage: 'confirm' });
+  await until(() => p.last('reply'), 'assertion');
+  assert.ok(p.last('reply').credential);
+  // Yes on the first question when the click's message beats the focus event: busy, and the focus event opens it
+  h = harness({ focused: false }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'g2', kind: 'get', options: getOptions() });
+  assert.equal(p.state(), 'get-prompt');                                     // a card needs no focus
+  p.emit({ type: 'approve', id: 'g2', stage: 'prompt' });
+  assert.equal(p.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  h.setFocus(true); h.m.onWindowFocusChanged(10);
+  assert.equal(p.state(), 'waiting');
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
+  // a pick waits the same way; Pick again is the owner asking again and is not checked
+  h = pickHarness({ focused: false }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  pickStart(p);
+  assert.equal(p.state(), 'busy');
+  assert.deepEqual(h.calls.showPopup, []);
+  h.setFocus(true); h.m.onWindowFocusChanged(10);
+  assert.equal(p.state(), 'pick-login');
+  assert.deepEqual(h.calls.showPopup, [PAGE]);
+  h.setFocus(false);                                                         // 1Password's popup has the focus
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com' }), true);  // a login without a password: the notice
+  assert.equal(p.state(), 'pick-notice');
+  p.emit({ type: 'approve', id: 'c1', stage: 'pick-login', choice: 'again' });
+  assert.equal(p.state(), 'pick-login');
+  assert.equal(h.calls.showPopup.length, 2);
+  assert.equal(h.m.handleCapture({ username: 'alice@example.com', password: 'pw' }), true);   // the owner's capture is taken without the focus
+  await until(() => h.calls.autosave.length === 1, 'autosave');
+  // a popup slot that frees while the focus is away promotes nothing; the focus coming back does
+  h = harness({ index: indexWith(v.made.credentialId) });
+  const first = makePort(1, { id: 1, windowId: 10 }); const second = makePort(2, { id: 1, windowId: 10 });
+  h.m.onConnect(first); h.m.onConnect(second);
+  first.emit({ type: 'request', id: 'a', kind: 'get', options: getOptions() });
+  second.emit({ type: 'request', id: 'b', kind: 'get', options: getOptions() });
+  assert.deepEqual([first.state(), second.state()], ['waiting', 'busy']);
+  h.setFocus(false);
+  sent = second.sent.length;
+  h.timers[0].fn();                                                          // the owner runs out of time
+  assert.equal(first.last('reply').error.message, 'timed out');
+  assert.equal(second.sent.length, sent);                                    // not promoted, and no second busy card
+  assert.equal(h.m.getState().owner, null);
+  h.setFocus(true); h.m.onWindowFocusChanged(10);
+  assert.equal(second.state(), 'waiting');
+  assert.deepEqual(h.calls.showPopup, [PAGE, PAGE]);
+  // a manager built without the dependency, or one whose dependency gives no plain false, behaves as focused
+  for (const hasFocus of [undefined, () => undefined, () => true]) {
+    const m = createManager({
+      authenticator: A, index: { get: () => indexWith(CRED)['example.com'], add() {} }, recovery: { async put() {}, async remove() {} },
+      showPopup: () => {}, autosave: () => {}, isConnected: () => true, getActive: () => here,
+      setTimeout: () => ({}), clearTimeout: () => {}, hasFocus,
+    });
+    const q = makePort(3, { id: 1, windowId: 10 }); m.onConnect(q);
+    q.emit({ type: 'request', id: 'g3', kind: 'get', options: getOptions() });
+    assert.equal(q.state(), 'waiting', String(hasFocus));
+  }
 });

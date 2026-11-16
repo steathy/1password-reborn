@@ -23,6 +23,7 @@
     const isConnected = deps.isConnected;
     const isNativeApp = deps.isNativeApp || (() => false);
     const getActive = deps.getActive;
+    const hasFocus = deps.hasFocus || (() => true);     // whether a browser window has the focus; without it the manager behaves as focused
     const log = deps.log || function () {};
     const isPasskeyValue = deps.isPasskeyValue || (() => false);   // fill-script.js's check, injected (this module stays pure)
     const setT = deps.setTimeout || ((fn, ms) => setTimeout(fn, ms));
@@ -179,7 +180,7 @@
     // of the picked login comes back through handleCapture. The passkey is generated only after the
     // pick, so an abandoned pick leaves no key behind.
     function openPick(rec) {
-      if ((owner && owner !== rec) || !isActiveTab(rec)) { rec.stage = 'busy'; return card(rec, 'busy'); }
+      if ((owner && owner !== rec) || !mayOpen(rec)) { rec.stage = 'busy'; return card(rec, 'busy'); }
       if (!isConnected()) { rec.stage = 'prompt'; return card(rec, 'not-connected'); }
       owner = rec;
       showPick(rec);
@@ -307,7 +308,7 @@
       card(rec, 'get-prompt', { site: rec.rpId }); // miss or partial index: ask first
     }
     function getOpenPopup(rec) {
-      if ((owner && owner !== rec) || !isActiveTab(rec)) { rec.stage = 'busy'; return card(rec, 'busy'); }
+      if ((owner && owner !== rec) || !mayOpen(rec)) { rec.stage = 'busy'; return card(rec, 'busy'); }
       if (!isConnected()) { rec.stage = 'prompt'; return card(rec, 'not-connected'); }   // the app went away after intake
       owner = rec;
       rec.stage = 'waiting';
@@ -320,10 +321,17 @@
       const a = getActive();
       return Boolean(a && a.tabId === rec.tabId && a.windowId === rec.windowId);
     }
+    // A popup is opened, and a waiting request promoted, only while a browser window really has
+    // the focus: the adapter remembers the last tab also while the user is in another application.
+    // Anything but a plain false counts as focused, so that a missing answer never blocks a sign-in.
+    function focused() { return hasFocus() !== false; }
+    function mayOpen(rec) { return focused() && isActiveTab(rec); }
+    // The owner's own checks stay on the remembered tab, with or without the focus: 1Password's
+    // popup takes the focus away while the owner waits for it. pickAgain is not checked either.
     function ownerIsActive() { return Boolean(owner && isActiveTab(owner)); }
     // Runs when the slot frees AND on every activation/focus event while it is free.
     function promote() {
-      if (owner) return;
+      if (owner || !focused()) return;
       const a = getActive();
       if (!a) return;
       for (const rec of pending.values()) {
