@@ -416,6 +416,7 @@ Firefox (1.5.0): fill, save and passkeys verified in Firefox 158 and 159 against
 with the signed build; the 1Password 7 build verified on the VM in Firefox ESR / Developer
 Edition with 1Password 7.3.657 and 7.9.834.
 1Password 7 edition (1.6.0-1p7): verified on the VM with 1Password 7.9.834 in Chrome and Firefox ESR (gates G1–G6).
+Plain edition (1.7.0-plain): verified on the VM with 1Password 7.9.834 in Chrome and Firefox 153 ESR (gates F1–F3 and R1–R11).
 
 ## Known risks
 
@@ -447,7 +448,7 @@ Edition with 1Password 7.3.657 and 7.9.834.
 
 ## Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.6.0-1p7**.
+See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.7.0-plain**.
 
 ## License
 
