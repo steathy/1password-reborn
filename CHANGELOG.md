@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
+## [Unreleased]
+
+### Changed
+- **One installer for the three editions.** `install.ps1` asks first which edition to install:
+  Reborn, the 1Password 7 edition or the plain edition. It marks the ones that fit the 1Password
+  app it finds (1Password 7 up to 7.9.834), installs each from its latest release on GitHub
+  instead of the branch's newest commit, and installs the plain edition only after a warning and
+  a typed `yes`.
+- README: the one-line command is the short link `https://tinyurl.com/1password-reborn` (to main's
+  `install.ps1`); the full GitHub address stays as the backup.
+
 ## [1.5.0] - 2026-10-31
 
 ### Added

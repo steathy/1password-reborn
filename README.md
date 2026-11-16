@@ -46,16 +46,42 @@ original used — native messaging (`2bua8c4s2c.com.agilebits.1password`) and a
 Open **Windows PowerShell** and run:
 
 ```powershell
+irm https://tinyurl.com/1password-reborn | iex
+```
+
+If the short link does not work, use the full address; it is where the short link points:
+
+```powershell
 irm https://raw.githubusercontent.com/steathy/1password-reborn/main/install.ps1 | iex
 ```
 
-It downloads this repo, then shows a menu:
+It asks which edition to install, and marks the ones that fit the 1Password app it finds on
+your PC:
+
+```
+[1] Reborn               1Password 4 and 7; one item per passkey
+[2] 1Password 7 edition  password and passkey in one login
+[3] Plain edition        fewest clicks, for experienced users
+```
+
+- **Reborn** (this branch) works with 1Password 4 and 1Password 7 and keeps each passkey in an
+  item of its own.
+- The **1Password 7 edition** ([`1pass7`](https://github.com/steathy/1password-reborn/tree/1pass7))
+  is for 1Password 7 only and keeps a site's password and passkey in one login.
+- The **plain edition** ([`1pass7-plain`](https://github.com/steathy/1password-reborn/tree/1pass7-plain))
+  is for 1Password 7 only and leaves out the safeguards of the other editions; the installer
+  warns first and goes on only when you type `yes`.
+
+1Password 7 works up to **7.9.834**, the last release that serves the classic extension; with a
+later 1Password 7 the installer says so before it installs anything. Each edition comes from its
+latest release on GitHub, so you get the build that was tested. Then the edition's menu:
 
 ```
 [1] Load unpacked   (recommended; works on any PC, no admin)
-[2] Force install   (no dev-mode nag, but ENTERPRISE-MANAGED devices only)
-[3] Uninstall       (remove force-install policy)
-[4] Firefox         (signed build for 1Password 4; unsigned build for 1Password 7)
+[2] Force install   (Reborn only; ENTERPRISE-MANAGED devices only)
+[3] Uninstall       (remove the force-install policy)
+[4] Firefox         (the edition's Firefox build)
+[9] Other editions
 ```
 
 - **Load unpacked** (recommended) stages the files under
@@ -73,9 +99,10 @@ It downloads this repo, then shows a menu:
   shows it as `[BLOCKED]` with *"not detected as enterprise managed"*). The installer
   detects this and offers to switch you to load-unpacked. See
   [Force install on a personal PC](#force-install-on-a-personal-pc) below.
-- **Firefox** opens the right XPI in Firefox for you: the Mozilla-signed build if 1Password 4
-  is installed, the unsigned 1Password 7 build in Developer Edition, Nightly or ESR if only
-  1Password 7 is. See [Firefox](#firefox) below. Nothing is written to Firefox's profile.
+- **Firefox** opens the edition's XPI in Firefox for you. For Reborn: the Mozilla-signed build
+  if 1Password 4 is installed, the unsigned 1Password 7 build in Developer Edition, Nightly or
+  ESR if only 1Password 7 is; the other two editions have one unsigned build each. See
+  [Firefox](#firefox) below. Nothing is written to Firefox's profile.
 
 > `irm … | iex` runs remote code — review [`install.ps1`](install.ps1) first if you like.
 > The same script works from a local clone too: double-click **`install.bat`**.
@@ -83,7 +110,8 @@ It downloads this repo, then shows a menu:
 > **Keep the load-unpacked folder in place.** Load unpacked reads the extension
 > directly from its folder (`%LOCALAPPDATA%\1Password-Reborn\src` or your clone) on
 > **every** browser launch — move or delete it and the extension disappears. To
-> remove it, use the browser's extensions page → Remove, then delete the folder.
+> remove it, use the browser's extensions page → Remove, then delete the folder. Choosing
+> another edition replaces the files in that folder: reload the extension afterwards.
 
 ## Firefox
 
