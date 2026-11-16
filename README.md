@@ -2,7 +2,7 @@
 
 The classic 1Password extension, reborn for today's browsers — now with passkeys.
 
-> **1Password 7 edition (1.6.0-1p7).** This branch, `1pass7`, is for **1Password 7 for Windows
+> **1Password 7 edition (1.8.0-1p7).** This branch, `1pass7`, is for **1Password 7 for Windows
 > only** (up to 7.9.834, the last release that serves the classic extension). It keeps a site's
 > **password and passkey in one login**. For 1Password 4, use the main version (one item per
 > passkey): <https://github.com/steathy/1password-reborn/tree/main>.
@@ -256,9 +256,9 @@ dimmed page:
   click **Done** on the card; only then does the site receive the credential. Your old
   login stays: move anything else you need from it, such as notes or one-time codes, then
   delete it.
-- **The switch:** the toolbar icon's right-click menu **1Password passkeys → Add new
-  passkeys to an existing login** (on by default). Turned off, every passkey goes into a
-  new item of its own.
+- **The switch:** *Add new passkeys to an existing login* (on by default), at the top of the
+  toolbar icon's right-click menu and in the options (below). Turned off, every passkey goes
+  into a new item of its own.
 - **Where 1Password 7 puts it:** the passkey is a **text** field `passkey` under **Saved on
   &lt;site&gt;** in the login. 1Password 7 shows it **in clear text** when you open the login: it is
   the passkey's private key, so do not copy it anywhere else or show it on a shared screen. It
@@ -269,6 +269,15 @@ dimmed page:
   a site asks for a passkey. Passkey items saved by earlier Reborn versions keep working.
 - **Use another way** is on every card except the one shown while a new passkey is being saved
   (Done / Cancel only). It hands the request to the browser's own passkey dialog.
+- **Every card counts down:** the time left stands in the top line and a bar along the bottom
+  edge shrinks with it; both turn red at about a third left. The time is the site's own limit
+  for the request, at least 30 seconds and at most ten minutes. When it is up, the card goes
+  and the site reports that the request failed.
+- **Options:** right-click the toolbar icon and choose **Options…**. They open under the icon
+  (in a small window where the browser cannot do that): the switch *Add new passkeys to an
+  existing login* and the **card style** (Reborn, 1Password 4 or 1Password 7), with a sample
+  of the save card. A change is saved as you make it and applies to the next card. In every
+  style all buttons of a card stand in one line at one width.
 
 **Add a passkey to a login you already have, by hand.** The pick step above copies your login
 into a new item. To keep the login itself, with its notes, one-time codes and history:
@@ -310,17 +319,20 @@ passkey field by hand breaks the passkey; Dropbox's file history is the undo.
 - The user-verification bit is set whenever the vault is unlocked and you clicked
   Sign in; there is no per-operation PIN or biometric. Anyone at your unlocked PC with
   the vault unlocked could use these passkeys, just as they could copy your passwords.
-- One passkey request at a time can use the 1Password popup; a second tab waits and
-  continues when you switch to it. Switching tab or window while waiting cancels. The
+- One passkey request at a time can use the 1Password popup, and only from the tab you are
+  looking at while the browser is in front: a request in another tab, or one that a page
+  starts while you are in another program, waits and continues when you switch to it.
+  Switching tab or window while the popup waits for your pick cancels that request. The
   app shows one popup at a time and switching tabs closes it; if a waiting request
   shows no popup, click the 1Password toolbar button and pick the item there.
 - The card lives in the page's DOM. Its buttons ignore scripted clicks and clicks in
   the first 500 ms, but a page on the same site could still hide or cover it.
 - If you cancel 1Password 7's save window, or chose Update existing there, re-send the
-  passkey from the toolbar icon's right-click menu **1Password passkeys → Re-save …**
-  (kept until the browser closes, or the extension is updated, reloaded or disabled) and
-  choose **Create New**. Re-save cannot undo what Update existing wrote into the login you
-  selected.
+  passkey from the toolbar icon's right-click menu **1Password passkeys → Re-save …** and
+  choose **Create New**. That menu shows only while Reborn holds a copy of a new passkey:
+  from the save until 1Password first hands the passkey back (at a sign-in or a fill of that
+  login), or until the browser closes or the extension is updated, reloaded or disabled.
+  Re-save cannot undo what Update existing wrote into the login you selected.
 - Passkeys are unusable from 1Password 7 on the iPhone (no passkey support there); it
   shows the passkey as text in the login. Register a second passkey there in iCloud
   Keychain if you need one.
@@ -333,7 +345,7 @@ src/                    the loadable / packable MV3 extension
   sw-bootstrap.js       Chrome entry point: imports bg/ and the engine
   bg/                   background shims shared by Chrome and Firefox (before/after the engine)
   rules/                declarativeNetRequest rules (deep link + dead-page redirect)
-  passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core)
+  passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core, options popup)
   ext/tldts.min.js      public-suffix list (rpId validation), unmodified
   paired.html           "Connected" page shown in place of the retired welcome page
   global.min.js         1Password engine, unmodified

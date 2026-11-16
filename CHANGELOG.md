@@ -5,6 +5,36 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
+## [1.8.0-1p7] - unreleased
+
+1Password 7 edition, branch `1pass7` (1Password 7 for Windows only). It takes over six designs of
+the plain edition (1.7.0-plain); its own flows (the pick, the card about a different account,
+Done, the editable title) stay as in 1.6.0-1p7.
+
+### Added
+- **Options under the toolbar icon:** right-click → **Options…** opens a popup with the switch
+  *Add new passkeys to an existing login*, the card style and a sample of the save card. A
+  change is saved as you make it and applies to the next card.
+- **Countdown on every card:** the time left and a bar, red from about a third left. A request
+  still lives as long as the site allows (30 seconds to ten minutes).
+- **Three card styles:** Reborn, 1Password 4 and 1Password 7. In each, all buttons of a card
+  stand in one line at one width.
+- README: how to add a passkey to a login you already have, by hand.
+
+### Changed
+- The switch *Add new passkeys to an existing login* stands at the top level of the toolbar
+  icon's right-click menu, beside **Options…**. The menu **1Password passkeys** (Re-save,
+  Discard all) shows only while Reborn holds a copy of a new passkey.
+- Only the tab you are looking at can open the 1Password popup, and only while the browser is
+  in front: a request from another tab, or one that a page starts while you are in another
+  program, waits until you switch to it.
+
+### Fixed
+- A passkey kept as a text field (the "Saved on &lt;site&gt;" field, or one added by hand), or
+  turned into a login's password by Update existing, is always removed from an item before the
+  engine fills it. Before, only the concealed `passkey` field of earlier items was.
+- A request id that a page sends again can no longer act for the request that has ended.
+
 ## [1.6.0-1p7] - 2026-11-12
 
 1Password 7 edition, branch `1pass7` (1Password 7 for Windows only). The main version stays the
