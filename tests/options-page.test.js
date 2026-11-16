@@ -13,9 +13,10 @@ const manifest = JSON.parse(read('manifest.json'));
 const KEY = 'op4pk.plain';
 const copy = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
 
-// opts.readError / opts.writeError: chrome.runtime.lastError is set in that callback; opts.throws: local.get throws.
+// opts.readError / opts.writeError: chrome.runtime.lastError is set in that callback; opts.throws: local.get throws;
+// opts.query: the page's address ends with it ('?window=1').
 function page(stored, opts = {}) {
-  const dom = new JSDOM(read('passkeys/options.html'), { url: 'chrome-extension://abc/passkeys/options.html', runScripts: 'outside-only' });
+  const dom = new JSDOM(read('passkeys/options.html'), { url: 'chrome-extension://abc/passkeys/options.html' + (opts.query || ''), runScripts: 'outside-only' });
   const w = dom.window;
   const store = stored === undefined ? {} : { [KEY]: copy(stored) };
   const calls = { get: 0, set: [] };
@@ -55,8 +56,14 @@ function page(stored, opts = {}) {
   };
 }
 
-test('the manifest names the options page, and the page and its sample carry no inline script', () => {
-  assert.deepEqual(manifest.options_ui, { page: 'passkeys/options.html', open_in_tab: true });
+test('the options open only from the menu entry: the manifest names neither an options page nor a popup for the button; no inline script', () => {
+  assert.equal(manifest.options_ui, undefined);                               // no Options entry of the browser, which could only show a full page
+  assert.equal(manifest.options_page, undefined);
+  assert.equal(manifest.action.default_popup, undefined);                     // the button's click stays 1Password's; the popup is set only while the options open
+  const html = read('passkeys/options.html');
+  assert.ok(/body \{[^}]*width: 640px/.test(html));                           // a fixed width: the popup takes it as its own
+  assert.ok(/iframe \{[^}]*height: 230px/.test(html));                        // room for the tallest card (1Password 7 style) without a scroll bar
+  assert.equal(/@media/.test(html), false);
   for (const f of ['passkeys/options.html', 'passkeys/options.js', 'passkeys/options-sample.html', 'passkeys/options-sample.js']) {
     assert.ok(fs.existsSync(path.join(SRC, f)), f);
   }
@@ -164,4 +171,34 @@ test('the sample is the real card: the asked style, the asked save buttons, a cl
   s = sample('?style=op4');
   assert.ok(s.css.includes('linear-gradient(#565c62,#292c30)'));
   s.dom.window.close();
+});
+
+test('opened as a small window it closes when it loses the focus or on Escape; as the popup it leaves that to the browser', async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const run = (query) => {
+    const p = page({ updateLogin: false, askSignIn: false, style: 'reborn' }, { query });
+    const t = { p, closed: 0, focused: false };
+    p.w.close = () => { t.closed++; };
+    Object.defineProperty(p.d, 'hasFocus', { value: () => t.focused, configurable: true });
+    t.blur = () => p.w.dispatchEvent(new p.w.Event('blur'));
+    t.key = (key) => p.w.dispatchEvent(new p.w.KeyboardEvent('keydown', { key }));
+    return t;
+  };
+  let t = run('?window=1');
+  t.blur();                                                                  // a click outside the window
+  await wait(20);
+  assert.equal(t.closed, 1);
+  t.focused = true;                                                          // the focus only moved into the sample
+  t.blur();
+  await wait(20);
+  assert.equal(t.closed, 1);
+  t.key('a');
+  assert.equal(t.closed, 1);
+  t.key('Escape');
+  assert.equal(t.closed, 2);
+  t = run('');                                                               // the popup under the button: the browser closes it by itself
+  t.blur();
+  t.key('Escape');
+  await wait(20);
+  assert.equal(t.closed, 0);
 });

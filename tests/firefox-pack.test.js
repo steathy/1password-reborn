@@ -18,7 +18,7 @@ const RAW = 'https://raw.githubusercontent.com/steathy/1password-reborn/1pass7';
 const srcManifest = JSON.parse(fs.readFileSync(path.join(SRC, 'manifest.json'), 'utf8'));
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const UNCHANGED_KEYS = ['manifest_version', 'name', 'version', 'description', 'author', 'short_name', 'homepage_url',
-  'icons', 'action', 'options_ui', 'content_scripts', 'declarative_net_request', 'incognito',
+  'icons', 'action', 'content_scripts', 'declarative_net_request', 'incognito',
   'web_accessible_resources'];
 
 function listFiles(dir, base = dir) {

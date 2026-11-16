@@ -45,60 +45,37 @@
 
   /* ---------- options: chrome.storage.local['op4pk.plain'] = { updateLogin, askSignIn, style } ---------- */
   // "Update login" on the save card and "Sign in" before the popup are off, and the card style is
-  // Reborn, until the user says otherwise in the menu. The key belongs to this edition alone: the
-  // other editions' keys (op4pk.settings, op4pk.index) are never read, written or deleted.
+  // Reborn, until the user says otherwise on the options page (passkeys/options.html). That page
+  // writes this key; the worker only reads it, once at the start and then at every change. The
+  // key belongs to this edition alone: the other editions' keys (op4pk.settings, op4pk.index)
+  // are never read, written or deleted.
   const OPTIONS_KEY = 'op4pk.plain';
   const STYLES = RM.STYLES;
   const options = { updateLogin: false, askSignIn: false, style: STYLES[0] };
-  const touched = new Set();                          // the options the user has clicked in this worker run
-  // The valid values of a stored object, and nothing else.
-  function validOf(s) {
-    const o = {};
-    if (s && typeof s === 'object') {
-      if (typeof s.updateLogin === 'boolean') o.updateLogin = s.updateLogin;
-      if (typeof s.askSignIn === 'boolean') o.askSignIn = s.askSignIn;
-      if (STYLES.includes(s.style)) o.style = s.style;
-    }
-    return o;
+  // Takes over the valid values of a stored object, one by one, and nothing else.
+  function follow(s) {
+    if (!s || typeof s !== 'object') return;
+    if (typeof s.updateLogin === 'boolean') options.updateLogin = s.updateLogin;
+    if (typeof s.askSignIn === 'boolean') options.askSignIn = s.askSignIn;
+    if (STYLES.includes(s.style)) options.style = s.style;
   }
-  // done(stored, failed): what is stored, valid values only, and why it could not be read (else null).
-  function readOptions(done) {
+  let changed = false;                                // a change arrived before the first read answered: it is the newer one
+  const optionsReady = new Promise((resolve) => {
+    const unreadable = (why) => { console.warn(TAG, 'options unreadable, the defaults apply:', why); resolve(); };
     try {
       chrome.storage.local.get(OPTIONS_KEY, (r) => {
         const err = chrome.runtime.lastError;
-        done(err ? {} : validOf(r && r[OPTIONS_KEY]), err ? (err.message || String(err)) : null);
+        if (err) return unreadable(err.message || String(err));
+        if (!changed) follow(r && r[OPTIONS_KEY]);
+        resolve();
       });
-    } catch (e) { done({}, (e && e.message) || String(e)); }
-  }
-  const optionsReady = new Promise((resolve) => readOptions((stored, failed) => {
-    if (failed) console.warn(TAG, 'options unreadable, the defaults apply:', failed);
-    for (const name of Object.keys(stored)) if (!touched.has(name)) options[name] = stored[name];   // a click that beat the read wins
-    resolve();
-  }));
-  // The new value applies at once. It is written over a fresh read of what is stored, changing
-  // only what was clicked in this run: neither a click that beat the first read nor one that
-  // follows a failed read writes defaults over the other stored options.
-  function setOption(name, value) {
-    touched.add(name);
-    options[name] = value;
-    const lost = (why) => console.warn(TAG, 'options not saved, the choice is lost on restart:', why);
-    optionsReady.then(() => readOptions((stored, failed) => {
-      if (failed) return lost(failed);
-      const next = Object.assign({ updateLogin: false, askSignIn: false, style: STYLES[0] }, stored);
-      for (const n of touched) next[n] = options[n];
-      try {
-        chrome.storage.local.set({ [OPTIONS_KEY]: next }, () => { const err = chrome.runtime.lastError; if (err) lost(err.message || String(err)); });
-      } catch (e) { lost((e && e.message) || String(e)); }
-    }));
-  }
-  // The options page (passkeys/options.html) writes the same key. Every change of it is followed
-  // here, the worker's own writes included, and the menu is rebuilt so that its marks agree.
+    } catch (e) { unreadable((e && e.message) || String(e)); }
+  });
   if (chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local' || !changes[OPTIONS_KEY]) return;
-      const stored = validOf(changes[OPTIONS_KEY].newValue);
-      for (const name of Object.keys(stored)) options[name] = stored[name];
-      rebuildMenus();
+      changed = true;
+      follow(changes[OPTIONS_KEY].newValue);
     });
   }
   // Requests are handled only once the options and the focused window's active tab are known, so
@@ -284,45 +261,52 @@
   });
   chrome.tabs.onRemoved.addListener((tabId) => manager.onTabRemoved(tabId));
 
-  /* ---------- context menu: "1Password passkeys" → the two options, the card style, and Re-save <title> / Discard all while a recovery copy is held ---------- */
+  /* ---------- options popup ---------- */
+  // The options (passkeys/options.html) open as the extension's popup under the toolbar button.
+  // The button itself has no popup, because its click belongs to 1Password, so one is set just
+  // for this opening and taken away again at once. Where the browser cannot open it (no
+  // action.openPopup before Chrome 127, or no window to hang it on) a small window opens instead.
+  const OPTIONS_PAGE = 'passkeys/options.html';
+  async function openOptions() {
+    try {
+      if (!chrome.action || typeof chrome.action.openPopup !== 'function') throw new Error('action.openPopup is not available');
+      await chrome.action.setPopup({ popup: OPTIONS_PAGE });
+      try { await chrome.action.openPopup(); }
+      finally { await chrome.action.setPopup({ popup: '' }); }
+    } catch (e) {
+      chrome.windows.create({ url: chrome.runtime.getURL(OPTIONS_PAGE + '?window=1'), type: 'popup', width: 680, height: 580 }, () => void chrome.runtime.lastError);
+    }
+  }
+
+  /* ---------- context menu of the toolbar button: "Options…", and "1Password passkeys" → Re-save <title> / Discard all while a recovery copy is held ---------- */
+  const OPTIONS_ID = 'op4pk-options';
   const ROOT_ID = 'op4pk-root';
   const CONTEXTS = ['action'];
-  const STYLE_TITLES = { reborn: 'Card style: Reborn', op4: 'Card style: 1Password 4', op7: 'Card style: 1Password 7' };
   let rebuilding = Promise.resolve();
   function rebuildMenus() {
     rebuilding = rebuilding.then(async () => {
-      await optionsReady;
-      let all = {};                                    // the options are shown even when the copies cannot be read
+      let all = {};                                    // Options… is shown even when the copies cannot be read
       try { all = await sessionGet(); }
       catch (e) { console.warn(TAG, 'recovery store unreadable, the menu shows no copies:', (e && e.message) || e); }
-      await new Promise((resolve) => chrome.contextMenus.remove(ROOT_ID, () => { void chrome.runtime.lastError; resolve(); }));
+      const gone = (id) => new Promise((resolve) => chrome.contextMenus.remove(id, () => { void chrome.runtime.lastError; resolve(); }));
+      await gone(OPTIONS_ID);
+      await gone(ROOT_ID);
       const done = () => void chrome.runtime.lastError;
-      const item = (o) => chrome.contextMenus.create(Object.assign({ parentId: ROOT_ID, contexts: CONTEXTS }, o), done);
-      chrome.contextMenus.create({ id: ROOT_ID, title: '1Password passkeys', contexts: CONTEXTS }, done);
-      item({ id: 'op4pk-opt:updateLogin', type: 'checkbox', checked: options.updateLogin, title: 'Show "Update login" when saving' });
-      item({ id: 'op4pk-opt:askSignIn', type: 'checkbox', checked: options.askSignIn, title: 'Show "Sign in" when authenticating' });
-      item({ id: 'op4pk-sep-style', type: 'separator' });
-      for (const s of STYLES) item({ id: 'op4pk-style:' + s, type: 'radio', checked: options.style === s, title: STYLE_TITLES[s] });
+      // at the top level, beside the engine's own "1Password"
+      chrome.contextMenus.create({ id: OPTIONS_ID, title: 'Options\u2026', contexts: CONTEXTS }, done);
       const ids = Object.keys(all);
-      if (!ids.length) return;                         // nothing unsaved: only the options
-      item({ id: 'op4pk-sep-copies', type: 'separator' });
-      for (const id of ids) item({ id: 'op4pk-resave:' + id, title: 'Re-save ' + all[id].title });
-      item({ id: 'op4pk-discard', title: 'Discard all' });
+      if (!ids.length) return;                         // nothing unsaved: no submenu
+      chrome.contextMenus.create({ id: ROOT_ID, title: '1Password passkeys', contexts: CONTEXTS }, done);
+      for (const id of ids) {
+        chrome.contextMenus.create({ id: 'op4pk-resave:' + id, parentId: ROOT_ID, title: 'Re-save ' + all[id].title, contexts: CONTEXTS }, done);
+      }
+      chrome.contextMenus.create({ id: 'op4pk-discard', parentId: ROOT_ID, title: 'Discard all', contexts: CONTEXTS }, done);
     }).catch((e) => console.warn(TAG, 'menu rebuild failed', e));
     return rebuilding;
   }
   chrome.contextMenus.onClicked.addListener((info) => {
     const id = String(info.menuItemId);
-    if (id.startsWith('op4pk-opt:')) {
-      const name = id.slice('op4pk-opt:'.length);
-      if (name === 'updateLogin' || name === 'askSignIn') setOption(name, info.checked === true);
-      return;
-    }
-    if (id.startsWith('op4pk-style:')) {
-      const style = id.slice('op4pk-style:'.length);
-      if (STYLES.includes(style)) setOption('style', style);
-      return;
-    }
+    if (id === OPTIONS_ID) { openOptions().catch((e) => console.warn(TAG, 'the options could not be opened', e)); return; }
     if (id === 'op4pk-discard') { recovery.clear().catch(() => {}); return; }   // failures are logged by mutateRecovery
     if (!id.startsWith('op4pk-resave:')) return;
     sessionGet().then((all) => {

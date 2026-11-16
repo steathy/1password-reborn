@@ -1,8 +1,8 @@
 /*
- * options.js — the options page (Options in the right-click menu of the toolbar button). It holds
- * the same three options as the "1Password passkeys" menu, and stays open, so several can be
- * changed in one go. It reads and writes chrome.storage.local['op4pk.plain']; the service worker
- * follows every change of that key, and so does this page when the menu is used meanwhile.
+ * options.js — the options, shown as the popup of the toolbar button (Options… in its right-click
+ * menu). The popup stays open while several options are changed, and the browser closes it at a
+ * click outside. It reads and writes chrome.storage.local['op4pk.plain']; the service worker
+ * follows every change of that key, and so does this page if another copy of it is open.
  */
 (function () {
   'use strict';
@@ -63,11 +63,19 @@
   boxes.askSignIn.addEventListener('change', () => change('askSignIn', boxes.askSignIn.checked));
   radios.forEach((r) => r.addEventListener('change', () => { if (r.checked) change('style', r.value); }));
 
-  // The menu (or another options page) changed the options while this page is open: follow it.
+  // The options were changed elsewhere (another copy of this page) while this one is open: follow it.
   if (chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes[KEY]) show(optionsOf(changes[KEY].newValue));
     });
+  }
+
+  // Where the browser cannot open the popup the page comes in a small window (?window=1). Like the
+  // popup it then closes at a click outside (the focus leaving for the sample inside does not
+  // count) and on Escape.
+  if (new URLSearchParams(location.search).get('window') === '1') {
+    window.addEventListener('blur', () => setTimeout(() => { if (!document.hasFocus()) window.close(); }, 0));
+    window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') window.close(); });
   }
 
   read((o, failed) => {

@@ -23,7 +23,7 @@ async function until(pred, label) {
 function boot(local, opts = {}) {
   const logs = [];
   const rec = (level) => (...a) => logs.push({ level, text: a.map(String).join(' ') });
-  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [], storage: [], rebuilds: 0 };
+  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [], storage: [], rebuilds: 0, action: [], windows: [] };
   const store = { local: copy(local || {}), session: {} };
   // opts.asyncLocal: local.get answers later with a snapshot taken at call time (like chrome.storage);
   // opts.localError: chrome.runtime.lastError is set in the callbacks of local.get and local.set (true),
@@ -57,13 +57,16 @@ function boot(local, opts = {}) {
     },
   });
   const chrome = {
-    runtime: { lastError: undefined, onConnect: listener() },
+    runtime: { lastError: undefined, onConnect: listener(), getURL: (p) => 'chrome-extension://abc/' + p },
+    // opts.noOpenPopup: a browser without action.openPopup; opts.openPopupFails: it rejects (no window to hang the popup on)
+    action: Object.assign({ setPopup: (o) => { calls.action.push(['setPopup', o.popup]); return Promise.resolve(); } },
+      opts.noOpenPopup ? {} : { openPopup: () => { calls.action.push(['openPopup']); return opts.openPopupFails ? Promise.reject(new Error('no window')) : Promise.resolve(); } }),
     storage: { local: area('local'), session: area('session'), onChanged: listener() },
     tabs: { query: (q, cb) => cb([{ id: 5, windowId: 1 }]), onActivated: listener(), onRemoved: listener() },
-    windows: { WINDOW_ID_NONE: -1, onFocusChanged: listener() },
+    windows: { WINDOW_ID_NONE: -1, onFocusChanged: listener(), create: (o, cb) => { calls.windows.push(copy(o)); if (cb) cb({ id: 99 }); } },
     contextMenus: {
       create: (o, cb) => { calls.menus.push(copy(o)); if (cb) cb(); },
-      remove: (id, cb) => { calls.rebuilds++; calls.menus = []; if (cb) cb(); },
+      remove: (id, cb) => { if (id === 'op4pk-root') calls.rebuilds++; calls.menus = calls.menus.filter((m) => m.id !== id && m.parentId !== id); if (cb) cb(); },
       removeAll: (cb) => { calls.menus = []; if (cb) cb(); },
       onClicked: listener(),
     },
@@ -270,7 +273,7 @@ test('save, then sign in with what was saved: one pick each; the fill that shows
   await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });
   await until(() => c.posted.some((m) => m.type === 'reply'), 'registration');
   const passkey = env.calls.autosave[0][0].collectedDocument.fields.find((f) => f.htmlName === 'passkey').value;   // what 1Password keeps and fills back
-  await until(() => env.calls.menus.length === 10, 'Re-save offered');
+  await until(() => env.calls.menus.length === 4, 'Re-save offered');
   const g = connect(env);
   await g.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
   assert.equal(g.card().state, 'waiting');
@@ -281,7 +284,7 @@ test('save, then sign in with what was saved: one pick each; the fill that shows
   await until(() => g.posted.some((m) => m.type === 'reply'), 'assertion');
   assert.equal(g.posted.find((m) => m.type === 'reply').credential.id, c.posted.find((m) => m.type === 'reply').credential.id);
   assert.deepEqual(g.posted.filter((m) => m.type === 'card').map((m) => m.card.state), ['waiting', 'none']);   // no confirm card
-  await until(() => env.calls.menus.length === 7, 'Re-save gone');              // seen in a fill: the copy is not needed any more
+  await until(() => env.calls.menus.length === 1, 'Re-save gone');              // seen in a fill: the copy is not needed any more
   assert.deepEqual(env.store.session['op4pk.recovery'], {});
   const rebuilds = env.calls.rebuilds;
   env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [{ action: 'fill', values: ['__op4pk', passkey] }] }] });   // the same passkey again, no request waiting
@@ -334,47 +337,71 @@ test('a request id sent again right behind the save click never strands the popu
   noErrors(env);
 });
 
-/* ---------- menu and storage ---------- */
+/* ---------- menu, options and storage ---------- */
 
-test('menu: the two options and the three styles always; Re-save and Discard all only while a copy is held', async () => {
+test('menu: Options… at the top level always; "1Password passkeys" with Re-save and Discard all only while a copy is held', async () => {
   const env = boot();
   await ticks(10);
-  const rows = () => env.calls.menus.map((m) => [m.id, m.type, m.checked, m.title]);
-  const fixed = [
-    ['op4pk-root', undefined, undefined, '1Password passkeys'],
-    ['op4pk-opt:updateLogin', 'checkbox', false, 'Show "Update login" when saving'],
-    ['op4pk-opt:askSignIn', 'checkbox', false, 'Show "Sign in" when authenticating'],
-    ['op4pk-sep-style', 'separator', undefined, undefined],
-    ['op4pk-style:reborn', 'radio', true, 'Card style: Reborn'],
-    ['op4pk-style:op4', 'radio', false, 'Card style: 1Password 4'],
-    ['op4pk-style:op7', 'radio', false, 'Card style: 1Password 7'],
-  ];
-  assert.deepEqual(rows(), fixed);
-  assert.ok(env.calls.menus.slice(1).every((m) => m.parentId === 'op4pk-root'));
+  const rows = () => env.calls.menus.map((m) => [m.id, m.parentId, m.type, m.title, m.contexts.join()]);
+  const options = ['op4pk-options', undefined, undefined, 'Options…', 'action'];
+  assert.deepEqual(rows(), [options]);                                        // no checkbox, no style entry, no submenu
   const c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
   await c.send({ type: 'approve', id: 'c1', stage: 'offer', choice: 'new' });
-  await until(() => env.calls.menus.length === 10, 'menu with a copy');
+  await until(() => env.calls.menus.length === 4, 'menu with a copy');
   const id = Object.keys(env.store.session['op4pk.recovery'])[0];
-  assert.deepEqual(rows().slice(0, 7), fixed);
-  assert.deepEqual(rows().slice(7), [
-    ['op4pk-sep-copies', 'separator', undefined, undefined],
-    ['op4pk-resave:' + id, undefined, undefined, 'Re-save [Passkey] webauthn.io - Alice'],
-    ['op4pk-discard', undefined, undefined, 'Discard all'],
+  assert.deepEqual(rows(), [
+    options,
+    ['op4pk-root', undefined, undefined, '1Password passkeys', 'action'],
+    ['op4pk-resave:' + id, 'op4pk-root', undefined, 'Re-save [Passkey] webauthn.io - Alice', 'action'],
+    ['op4pk-discard', 'op4pk-root', undefined, 'Discard all', 'action'],
   ]);
   env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-resave:' + id });
   await until(() => env.calls.autosave.length === 2, 're-save');
   assert.deepEqual(env.calls.autosave[1], env.calls.autosave[0]);
   env.chrome.contextMenus.removeAll();                                        // the engine reconnects and wipes the menus
-  await until(() => env.calls.menus.length === 10, 'menu rebuilt');
+  await until(() => env.calls.menus.length === 4, 'menu rebuilt');
   env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-discard' });
   await until(() => Object.keys(env.store.session['op4pk.recovery']).length === 0, 'copies discarded');
-  await until(() => env.calls.menus.length === 7, 'the options stay');
-  assert.deepEqual(rows(), fixed);
+  await until(() => env.calls.menus.length === 1, 'only Options… is left');
+  assert.deepEqual(rows(), [options]);
+  // the entries of the retired option menu do nothing any more
+  for (const old of ['op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-style:op7']) env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: old, checked: true });
+  await ticks(10);
+  assert.equal(env.store.local['op4pk.plain'], undefined);
+  assert.deepEqual(env.calls.action, []);
   noErrors(env);
 });
 
-test("storage: only this edition's options key is read and written; the other editions' keys stay as they are", async () => {
+test('Options… opens the options as the popup of the toolbar button and gives the button back; where that cannot be done, a small window', async () => {
+  const PAGE = 'passkeys/options.html';
+  const click = (env) => env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });
+  let env = boot();
+  await ticks(10);
+  click(env);
+  await ticks(10);
+  assert.deepEqual(env.calls.action, [['setPopup', PAGE], ['openPopup'], ['setPopup', '']]);   // set only for this opening: the button's click stays 1Password's
+  assert.deepEqual(env.calls.windows, []);
+  noErrors(env);
+  // the popup cannot be opened (no window to hang it on): the button is given back all the same, and a small window opens
+  env = boot({}, { openPopupFails: true });
+  await ticks(10);
+  click(env);
+  await ticks(10);
+  assert.deepEqual(env.calls.action, [['setPopup', PAGE], ['openPopup'], ['setPopup', '']]);
+  assert.deepEqual(env.calls.windows, [{ url: 'chrome-extension://abc/' + PAGE + '?window=1', type: 'popup', width: 680, height: 580 }]);
+  noErrors(env);
+  // a browser without action.openPopup: the small window, and the button is never touched
+  env = boot({}, { noOpenPopup: true });
+  await ticks(10);
+  click(env);
+  await ticks(10);
+  assert.deepEqual(env.calls.action, []);
+  assert.equal(env.calls.windows.length, 1);
+  noErrors(env);
+});
+
+test("storage: the worker only reads this edition's options key; it stores no option and leaves the other editions' keys alone", async () => {
   const other = { 'op4pk.index': { 'webauthn.io': [{ credentialId: 'x', userName: 'a', seenAt: 1 }] }, 'op4pk.settings': { addToExisting: false } };
   const env = boot(other);
   await ticks(10);
@@ -387,21 +414,17 @@ test("storage: only this edition's options key is read and written; the other ed
   const g = connect(env);
   await g.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
   assert.equal(g.card().state, 'waiting');
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-style:op4', checked: true });
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });
   await ticks(10);
-  assert.deepEqual(env.calls.storage.filter((x) => x[0] === 'local'),
-    [['local', 'get', 'op4pk.plain'], ['local', 'get', 'op4pk.plain'], ['local', 'set', 'op4pk.plain']]);   // the start, then the click: a fresh read and the write
-  assert.deepEqual(env.store.local, { ...other, 'op4pk.plain': { updateLogin: false, askSignIn: false, style: 'op4' } });
+  assert.deepEqual(env.calls.storage.filter((x) => x[0] === 'local'), [['local', 'get', 'op4pk.plain']]);   // one read at the start, never a write
+  assert.deepEqual(env.store.local, other);
   assert.ok(env.calls.storage.some((x) => x[0] === 'session' && x[1] === 'set' && x[2] === 'op4pk.recovery'));
   noErrors(env);
 });
 
-test('options: stored values apply; a click is stored and applies to the next card; a click that beats the read wins; storage errors are logged', async () => {
-  const ticked = (env) => env.calls.menus.filter((m) => m.checked).map((m) => m.id);
-  // stored values
+test('options: stored values apply; wrong kinds are ignored one by one; an unreadable store counts as the defaults and holds nothing up', async () => {
   let env = boot({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op7' } });
   await ticks(10);
-  assert.deepEqual(ticked(env), ['op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-style:op7']);
   let c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
   assert.deepEqual(c.card(), { state: 'offer', site: 'webauthn.io', name: 'Alice', update: true });
@@ -415,86 +438,32 @@ test('options: stored values apply; a click is stored and applies to the next ca
   assert.equal(c.card().state, 'waiting');
   assert.equal(env.calls.popup, 1);
   noErrors(env);
-  // clicks: stored, and used for the next card; unknown names change nothing
-  env = boot();
-  await ticks(10);
-  const click = (id, checked) => env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: id, checked });
-  click('op4pk-opt:updateLogin', true); click('op4pk-style:op4', true);
-  await ticks(10);
-  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: false, style: 'op4' });
-  c = connect(env);
-  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
-  assert.equal(c.card().update, true);
-  assert.equal(c.last('card').style, 'op4');
-  click('op4pk-opt:updateLogin', false); click('op4pk-style:nope', true); click('op4pk-opt:nope', true);
-  await ticks(10);
-  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: false, askSignIn: false, style: 'op4' });
-  noErrors(env);
-  // a click before the stored values are read wins, and the other stored values survive it
-  env = boot({ 'op4pk.plain': { updateLogin: false, askSignIn: true, style: 'op7' } }, { asyncLocal: true });
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-opt:updateLogin', checked: true });
-  await new Promise((r) => setTimeout(r, 60));
-  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: true, style: 'op7' });
-  assert.deepEqual(ticked(env), ['op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-style:op7']);
-  noErrors(env);
-  // values of the wrong kind in storage are ignored one by one
   env = boot({ 'op4pk.plain': { updateLogin: 'yes', askSignIn: true, style: 'neon' } });
   await ticks(10);
-  assert.deepEqual(ticked(env), ['op4pk-opt:askSignIn', 'op4pk-style:reborn']);
-  // storage errors: logged once each, the defaults apply
-  env = boot({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op7' } }, { localError: true });
-  await ticks(10);
-  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-read')).length, 1);
-  assert.deepEqual(ticked(env), ['op4pk-style:reborn']);
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-opt:askSignIn', checked: true });
-  await ticks(10);
-  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('options not saved')).length, 1);
-  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: true, style: 'op7' });   // unreadable: nothing is written over it
-  assert.equal(env.calls.storage.filter((x) => x[0] === 'local' && x[1] === 'set').length, 0);
-  noErrors(env);
-  // a write that fails is logged
-  env = boot({}, { localError: 'write' });
-  await ticks(10);
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-opt:askSignIn', checked: true });
-  await ticks(10);
-  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('options not saved') && l.text.includes('boom-write')).length, 1);
-  noErrors(env);
-});
-
-test('options: after a failed first read a click keeps what is stored and changes only what was clicked', async () => {
-  const env = boot({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op7' } }, { localError: 'first-read' });
-  await ticks(10);
-  assert.deepEqual(env.calls.menus.filter((m) => m.checked).map((m) => m.id), ['op4pk-style:reborn']);   // this run uses the defaults
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-style:op4', checked: true });
-  await ticks(10);
-  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: true, style: 'op4' });
-  const c = connect(env);
+  c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  assert.deepEqual([c.card().update, c.last('card').style], [undefined, 'reborn']);
+  await c.send({ type: 'decline', id: 'c1', how: 'cancel' });
   await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
-  assert.deepEqual([c.card().state, c.last('card').style], ['ask', 'op4']);       // the write is followed like any other: this run now uses what is stored
-  assert.deepEqual(env.calls.menus.filter((m) => m.checked).map((m) => m.id), ['op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-style:op4']);
+  assert.equal(c.card().state, 'ask');                                         // the one valid value is used
   noErrors(env);
+  for (const trouble of [{ localError: true }, { localThrows: true }]) {
+    const label = JSON.stringify(trouble);
+    env = boot({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op7' } }, trouble);
+    await ticks(10);
+    assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('options unreadable')).length, 1, label);
+    assert.equal(env.calls.menus.length, 1, label);
+    c = connect(env);
+    await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+    assert.deepEqual([c.card().state, c.last('card').style], ['waiting', 'reborn'], label);
+    noErrors(env);
+  }
 });
 
-test('options: a storage call that throws counts as the defaults and holds nothing up', async () => {
-  const env = boot({}, { localThrows: true });
-  await ticks(10);
-  assert.equal(env.calls.menus.length, 7);
-  const c = connect(env);
-  await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
-  assert.equal(c.card().state, 'waiting');
-  assert.equal(c.last('card').style, 'reborn');
-  assert.ok(env.logs.some((l) => l.level === 'warn' && l.text.includes('options unreadable')));
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-style:op7', checked: true });
-  await ticks(10);
-  assert.ok(env.logs.some((l) => l.level === 'warn' && l.text.includes('options not saved')));
-  noErrors(env);
-});
-
-test('menu: the options are there even when the copies cannot be read', async () => {
+test('menu: Options… is there even when the copies cannot be read', async () => {
   const env = boot({}, { sessionError: true });
   await ticks(10);
-  assert.deepEqual(env.calls.menus.map((m) => m.id),
-    ['op4pk-root', 'op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-sep-style', 'op4pk-style:reborn', 'op4pk-style:op4', 'op4pk-style:op7']);
+  assert.deepEqual(env.calls.menus.map((m) => m.id), ['op4pk-options']);
   assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-read')).length, 1);
   noErrors(env);
 });
@@ -515,17 +484,14 @@ test('fillItem hook: the engine never receives a passkey kept in a section; a ho
   assert.ok(env.logs.some((l) => l.level === 'error' && l.text.includes('fillItem hook failed')));
 });
 
-/* ---------- the options page writes the same key ---------- */
+/* ---------- the options page stores the options; the worker follows ---------- */
 
-test('options page: a change of the stored options from outside applies to the next card and to the marks in the menu', async () => {
-  const env = boot({ 'op4pk.plain': { updateLogin: false, askSignIn: false, style: 'reborn' } });
+test('options: the worker follows what the options page stores, at once and also after a failed first read', async () => {
+  let env = boot({ 'op4pk.plain': { updateLogin: false, askSignIn: false, style: 'reborn' } });
   await ticks(10);
-  const ticked = () => env.calls.menus.filter((m) => m.checked).map((m) => m.id);
-  assert.deepEqual(ticked(), ['op4pk-style:reborn']);
   env.chrome.storage.local.set({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op7' } }, () => {});   // the options page
   await ticks(10);
-  assert.deepEqual(ticked(), ['op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-style:op7']);
-  const c = connect(env);
+  let c = connect(env);
   await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
   assert.deepEqual(c.card(), { state: 'offer', site: 'webauthn.io', name: 'Alice', update: true });
   assert.equal(c.last('card').style, 'op7');
@@ -533,19 +499,39 @@ test('options page: a change of the stored options from outside applies to the n
   await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
   assert.equal(c.card().state, 'ask');
   assert.equal(env.calls.popup, 0);
-  // a later click in the menu changes only what was clicked: what the page stored stays
-  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-opt:askSignIn', checked: false });
+  // while a card is up: the next card of the same request already has the new style
+  env.chrome.storage.local.set({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op4' } }, () => {});
   await ticks(10);
-  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: false, style: 'op7' });
-  assert.deepEqual(ticked(), ['op4pk-opt:updateLogin', 'op4pk-style:op7']);   // the marks are rebuilt after the menu's own clicks too
-  // values of the wrong kind are ignored one by one; other keys and the session area are not ours
-  env.chrome.storage.local.set({ 'op4pk.plain': { updateLogin: 'no', style: 'op4' } }, () => {});
-  env.chrome.storage.local.set({ 'op4pk.settings': { addToExisting: false } }, () => {});
-  env.chrome.storage.session.set({ 'op4pk.plain': { style: 'reborn' } }, () => {});
-  await ticks(10);
-  assert.deepEqual(ticked(), ['op4pk-opt:updateLogin', 'op4pk-style:op4']);
-  await c.send({ type: 'decline', id: 'g1', how: 'cancel' });
-  await c.send({ type: 'request', id: 'g2', kind: 'get', options: GET });
+  await c.send({ type: 'approve', id: 'g1', stage: 'ask', choice: 'go' });
   assert.deepEqual([c.card().state, c.last('card').style], ['waiting', 'op4']);
+  // values of the wrong kind are ignored one by one; other keys and the session area are not ours
+  env.chrome.storage.local.set({ 'op4pk.plain': { updateLogin: 'no', style: 'reborn' } }, () => {});
+  env.chrome.storage.local.set({ 'op4pk.settings': { addToExisting: false } }, () => {});
+  env.chrome.storage.session.set({ 'op4pk.plain': { style: 'op7' } }, () => {});
+  await ticks(10);
+  await c.send({ type: 'decline', id: 'g1', how: 'cancel' });
+  await c.send({ type: 'request', id: 'c2', kind: 'create', options: CREATE });
+  assert.deepEqual([c.card().update, c.last('card').style], [true, 'reborn']);
+  assert.equal(env.calls.rebuilds, 1);                                         // the menu carries no option marks any more: a change of options rebuilds nothing
+  noErrors(env);
+  // the first read failed: this run starts with the defaults, and the next thing the page stores is followed like any other
+  env = boot({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op7' } }, { localError: 'first-read' });
+  await ticks(10);
+  c = connect(env);
+  await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.deepEqual([c.card().state, c.last('card').style], ['waiting', 'reborn']);
+  await c.send({ type: 'decline', id: 'g1', how: 'cancel' });
+  env.chrome.storage.local.set({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op4' } }, () => {});
+  await ticks(10);
+  await c.send({ type: 'request', id: 'g2', kind: 'get', options: GET });
+  assert.deepEqual([c.card().state, c.last('card').style], ['ask', 'op4']);
+  noErrors(env);
+  // a change that arrives before the first read has answered is not overwritten by that read
+  env = boot({ 'op4pk.plain': { updateLogin: false, askSignIn: false, style: 'reborn' } }, { asyncLocal: true });
+  env.chrome.storage.onChanged.fns.forEach((f) => f({ 'op4pk.plain': { newValue: { updateLogin: true, askSignIn: false, style: 'op7' } } }, 'local'));
+  await new Promise((r) => setTimeout(r, 60));
+  c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  assert.deepEqual([c.card().update, c.last('card').style], [true, 'op7']);
   noErrors(env);
 });
