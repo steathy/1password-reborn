@@ -45,10 +45,10 @@ function harness(opts = {}) {
   const gate = { hold: null, fail: null };
   // opts.signGate: an assertion is signed only once this promise has settled, and fails if it
   // rejected, so a test can act while the request is being signed. calls.signEnded counts the
-  // signings that are over.
-  const authenticator = opts.signGate
-    ? Object.assign({}, A, { getAssertion: async (...a) => { try { await opts.signGate; return await A.getAssertion(...a); } finally { calls.signEnded++; } } })
-    : A;
+  // signings that are over. opts.makeGate: the same for making a passkey.
+  let authenticator = A;
+  if (opts.signGate) authenticator = Object.assign({}, authenticator, { getAssertion: async (...a) => { try { await opts.signGate; return await A.getAssertion(...a); } finally { calls.signEnded++; } } });
+  if (opts.makeGate) authenticator = Object.assign({}, authenticator, { makeCredential: async (...a) => { await opts.makeGate; return A.makeCredential(...a); } });
   const m = createManager({
     authenticator,
     index: { get: (rp) => (indexData[rp] || []).slice(), add(rp, e) { (indexData[rp] = indexData[rp] || []).push(e); } },
@@ -1064,4 +1064,26 @@ test('the clock and the style ride on each of the twelve cards; the style is the
   ]);
   assert.deepEqual(frames(b), [['get-prompt', 600000, 600000, 'op7'], ['busy', 600000, 600000, 'op4']]);
   assert.equal(new Set(frames(a).concat(frames(b)).map((f) => f[0])).size, 12);   // every card the branch has
+});
+
+/* ---------- review of the ports: the check right after the passkey is made (finding F1) ---------- */
+
+test('a request id sent again while its passkey is being made: the ended save stores no recovery copy and sends nothing', async () => {
+  for (const cancelFirst of [false, true]) {
+    const label = cancelFirst ? 'abort first' : 'supersede';
+    let release;
+    const h = harness({ makeGate: new Promise((r) => { release = r; }) });   // the switch is off: Save saves at once
+    const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'X', kind: 'create', options: createOptions() });
+    p.emit({ type: 'approve', id: 'X', stage: 'prompt', title: '' });         // Save: the passkey is being made
+    if (cancelFirst) p.emit({ type: 'cancel', id: 'X' });
+    p.emit({ type: 'request', id: 'X', kind: 'create', options: createOptions() });   // the same id again
+    const sent = p.sent.length;
+    release();
+    await wait(60);
+    assert.equal(h.calls.recoveryPut.length, 0, label);                       // no copy of a passkey that is never saved (no stray Re-save)
+    assert.equal(h.calls.autosave.length, 0, label);
+    assert.deepEqual(p.sent.slice(sent), [], label);                          // nothing goes to the page under the newer request's id
+    assert.deepEqual(h.m.getState(), { owner: null, pending: [{ id: 'X', kind: 'create', stage: 'prompt', tabId: 1 }] }, label);
+  }
 });

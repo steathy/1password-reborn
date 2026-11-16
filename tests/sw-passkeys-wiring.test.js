@@ -874,3 +874,20 @@ test('menu: the two top-level entries are there even when the copies cannot be r
   assert.deepEqual(env.store.local['op4pk.settings'], { addToExisting: false });
   noErrors(env);
 });
+
+/* ---------- review of the ports: requests wait for the focus answer at a worker start (finding F2) ---------- */
+
+test('a request right at a worker start waits for the focus answer: with another application in front it waits as busy and opens when the focus returns', async () => {
+  const env = boot(KNOWN, { lastFocused: { id: 1, focused: false }, lateFocus: true });   // the browser is not in front; its answer comes a moment later
+  const c = connect(env);
+  c.emit({ type: 'request', id: 'g1', kind: 'get', options: GET });                        // before that answer
+  await new Promise((r) => setTimeout(r, 40));
+  await ticks(10);
+  assert.equal(c.card().state, 'busy');
+  assert.equal(env.calls.popup, 0);
+  env.chrome.windows.onFocusChanged.fns[0](1);                                             // back in the browser
+  await ticks(10);
+  assert.equal(c.card().state, 'waiting');
+  assert.equal(env.calls.popup, 1);
+  noErrors(env);
+});
