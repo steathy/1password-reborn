@@ -25,7 +25,7 @@ const prefs = (dir) => dir + '\\defaults\\pref\\channel-prefs.js';
 const OP7_HKCU = 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\1Password';
 const OP7_HKLM = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\1Password';
 const PAYLOAD = 'C:\\op4-test-payload';
-const XPI_UNSIGNED = PAYLOAD + '\\dist\\firefox\\1password-reborn-firefox-1p7.xpi';
+const XPI_UNSIGNED = PAYLOAD + '\\dist\\firefox\\1password-reborn-firefox-plain.xpi';
 
 const FF_RELEASE = { Name: 'Firefox', Exe: exe(DIR_RELEASE), Channel: 'release', Unsigned: false };
 const FF_ESR = { Name: 'Firefox ESR', Exe: exe(DIR_RELEASE), Channel: 'esr', Unsigned: true };
@@ -74,12 +74,12 @@ const CASES = [
              channels: { [prefs(DIR_DEV)]: 'aurora' }, versions: { [OP7_HKCU]: '7.4.767' }, answers: [''] },
 ];
 
-describe('install.ps1 Firefox flow (1Password 7 edition)', { skip: SKIP }, () => {
+describe('install.ps1 Firefox flow (plain edition)', { skip: SKIP }, () => {
   let R;
   before(() => { R = runCases(CASES); });
 
   it('row: 1Password 7 with Developer Edition or ESR -> open the unsigned XPI there', () => {
-    assert.deepEqual(R[0], { Action: 'open-unsigned', Firefox: 'Firefox Developer Edition', Xpi: 'dist\\firefox\\1password-reborn-firefox-1p7.xpi' });
+    assert.deepEqual(R[0], { Action: 'open-unsigned', Firefox: 'Firefox Developer Edition', Xpi: 'dist\\firefox\\1password-reborn-firefox-plain.xpi' });
     assert.equal(R[2].Action, 'open-unsigned');
     assert.equal(R[2].Firefox, 'Firefox ESR');
   });
@@ -117,6 +117,6 @@ describe('install.ps1 Firefox flow (1Password 7 edition)', { skip: SKIP }, () =>
     assert.deepEqual(R[16].Started, []);
     assert.match(R[16].Output, /Firefox was not found/);
     assert.deepEqual(R[17].Started, []);
-    assert.match(R[17].Error, /Missing .*1password-reborn-firefox-1p7\.xpi/);
+    assert.match(R[17].Error, /Missing .*1password-reborn-firefox-plain\.xpi/);
   });
 });

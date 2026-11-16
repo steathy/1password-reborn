@@ -3,14 +3,14 @@
 
   Run it either way:
     * One command (no clone needed):
-        irm https://raw.githubusercontent.com/YOUR_GH_USER/1password-reborn/1pass7/install.ps1 | iex
+        irm https://raw.githubusercontent.com/YOUR_GH_USER/1password-reborn/1pass7-plain/install.ps1 | iex
     * From a local clone: double-click install.bat, or right-click -> Run with PowerShell.
 
   It shows a menu:
     [1] Load unpacked  - no admin; stages files and you click 'Load unpacked' once
     [3] Uninstall      - remove a force-install policy left by the main version
     [4] Firefox        - opens the unsigned 1Password 7 build (Developer Edition, Nightly or ESR)
-  1Password 7 edition: 1Password 7 for Windows only. Force install needs a crx ID that 1Password 7's
+  Plain edition: 1Password 7 for Windows only. Force install needs a crx ID that 1Password 7's
   browser host does not admit, so this edition does not force-install; [3] still removes such a policy.
 
   When run via irm|iex it downloads this repo's zip to %LOCALAPPDATA%\1Password-Reborn
@@ -31,14 +31,14 @@ $ErrorActionPreference = 'Stop'
 # ===== Published GitHub repo (change if you fork) =====
 $Owner  = 'steathy'
 $Repo   = '1password-reborn'
-$Branch = '1pass7'
+$Branch = '1pass7-plain'
 # ======================================================
 
 $InstallDir    = Join-Path $env:LOCALAPPDATA '1Password-Reborn'
 $OldInstallDir = Join-Path $env:LOCALAPPDATA '1Password4-MV3'   # staged by the 1password4-mv3 installer; not migrated, only pointed out
 $RawBase    = "https://raw.githubusercontent.com/$Owner/$Repo/$Branch"
 # The Firefox build (dist\firefox, built by build\pack-firefox.js): unsigned, because its gecko ID belongs to AgileBits; it needs Developer Edition, Nightly or ESR.
-$FirefoxXpiUnsigned = 'dist\firefox\1password-reborn-firefox-1p7.xpi'
+$FirefoxXpiUnsigned = 'dist\firefox\1password-reborn-firefox-plain.xpi'
 $ForceInstallId = 'mmfoigkanhpccidpokhjnomdcmgmjomj'   # the main version's signed crx (build/key.pem); [3] removes its force-install policy
 
 # ---- MAS-style dedicated window --------------------------------------------
@@ -166,7 +166,7 @@ function Restart-Agent {
 }
 function Test-Payload($root) {
   $root -and (Test-Path (Join-Path $root 'src\manifest.json')) `
-        -and (Test-Path (Join-Path $root 'dist\firefox\1password-reborn-firefox-1p7.xpi'))
+        -and (Test-Path (Join-Path $root 'dist\firefox\1password-reborn-firefox-plain.xpi'))
 }
 function Get-RemoteSha {
   # The branch head commit SHA is a cheap content fingerprint - a few bytes over
@@ -442,7 +442,7 @@ function Get-FirefoxInstalls {
   return ,$found
 }
 function Resolve-FirefoxPlan {
-  # The decision table behind [4] Firefox. Pure: no I/O. 1Password 7 edition: always the unsigned build.
+  # The decision table behind [4] Firefox. Pure: no I/O. Plain edition: always the unsigned build.
   #   1Password 7 found             -> open-unsigned in Developer Edition/Nightly/ESR; release only -> needs-dev-edition
   #   no 1Password 7                -> ask-anyway until -AnywayAnswer; 'y' -> as above, else declined
   #   no Firefox                    -> no-firefox

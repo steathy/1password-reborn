@@ -14,7 +14,7 @@ const Z = require('./helpers/zip.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
-const RAW = 'https://raw.githubusercontent.com/steathy/1password-reborn/1pass7';
+const RAW = 'https://raw.githubusercontent.com/steathy/1password-reborn/1pass7-plain';   // the plain edition's own update channel
 const srcManifest = JSON.parse(fs.readFileSync(path.join(SRC, 'manifest.json'), 'utf8'));
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const UNCHANGED_KEYS = ['manifest_version', 'name', 'version', 'description', 'author', 'short_name', 'homepage_url',
@@ -92,10 +92,10 @@ it('6. the four engine files in each stage are byte-identical to src/', () => {
   }
 });
 
-it('7. updates.json lists the 1Password 7 build at the given version on the edition branch', () => {
+it("7. updates.json lists the plain edition's build at the given version on the edition branch", () => {
   assert.deepEqual(P.VARIANTS.map((v) => v.key), ['1p7']);
-  assert.deepEqual(P.updatesJson('4.7.5.94'), { addons: {
-    'onepassword4@agilebits.com': { updates: [{ version: '4.7.5.94', update_link: RAW + '/dist/firefox/1password-reborn-firefox-1p7.xpi' }] },
+  assert.deepEqual(P.updatesJson('4.7.5.95'), { addons: {
+    'onepassword4@agilebits.com': { updates: [{ version: '4.7.5.95', update_link: RAW + '/dist/firefox/1password-reborn-firefox-plain.xpi' }] },
   } });
 });
 

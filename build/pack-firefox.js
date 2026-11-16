@@ -3,15 +3,18 @@
 /*
  * pack-firefox.js — build the Firefox XPIs for 1Password Reborn from src/.
  *
- * 1Password 7 edition (branch 1pass7): one variant,
+ * Plain edition (branch 1pass7-plain): one variant,
  *   1p7  onepassword4@agilebits.com   for 1Password 7 (native messaging), unsigned
  * copied from src/ (minus _metadata/) to build/staging-firefox/1p7/, given a Firefox manifest.json
  * (background.scripts instead of the service worker; gecko ID, strict_min_version, update_url on
  * this branch, the data-collection declaration, a CSP override without upgrade-insecure-requests,
  * and the Firefox-only webRequestBlocking and ws://127.0.0.1/* permissions for shim 7), linted
  * with `web-ext lint --self-hosted` (zero errors, only the expected warnings) and built with
- * `web-ext build` into dist/firefox/1password-reborn-firefox-1p7.xpi (committed as is).
+ * `web-ext build` into dist/firefox/1password-reborn-firefox-plain.xpi (committed as is).
  * Finally dist/firefox/updates.json gets the ID at src/manifest.json's version.
+ * The add-on ID is the one of the 1Password 7 edition's build (1Password 7 admits no other), so
+ * the update channel must stay on this branch: a link to another branch would turn an installed
+ * plain edition into that edition.
  *
  * Usage:  node build/pack-firefox.js            stage + lint + build + updates.json
  *         node build/pack-firefox.js --stage-only
@@ -26,7 +29,7 @@ const SRC = path.join(ROOT, 'src');
 const DIST_FIREFOX = path.join(ROOT, 'dist', 'firefox');
 const STAGING = path.join(__dirname, 'staging-firefox');
 
-const RAW_BASE = 'https://raw.githubusercontent.com/steathy/1password-reborn/1pass7';   // the 1Password 7 edition's own update channel
+const RAW_BASE = 'https://raw.githubusercontent.com/steathy/1password-reborn/1pass7-plain';   // the plain edition's own update channel
 const UPDATE_URL = RAW_BASE + '/dist/firefox/updates.json';
 const STRICT_MIN_VERSION = '140.0';
 // Mozilla requires this for every extension first signed after 2025-11-03. The types are
@@ -35,10 +38,10 @@ const STRICT_MIN_VERSION = '140.0';
 // (tests/engine-inventory.test.js). Both variants carry it.
 const DATA_COLLECTION = { required: ['authenticationInfo', 'browsingActivity', 'websiteContent'] };
 
-// 1Password 7 edition (branch 1pass7): only the unsigned 1Password 7 build; the signed 1Password 4
-// build belongs to the main version.
+// Plain edition (branch 1pass7-plain): only its own unsigned build for 1Password 7; the signed
+// 1Password 4 build belongs to the main version, the 1p7 XPI to the 1Password 7 edition.
 const VARIANTS = [
-  { key: '1p7', id: 'onepassword4@agilebits.com', xpi: '1password-reborn-firefox-1p7.xpi', app: '1Password 7', signed: false },
+  { key: '1p7', id: 'onepassword4@agilebits.com', xpi: '1password-reborn-firefox-plain.xpi', app: '1Password 7', signed: false },
 ];
 
 // Firefox has no importScripts: these run as separate scripts, in this order (= the
