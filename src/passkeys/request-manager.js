@@ -12,6 +12,7 @@
   const DEFAULT_TIMEOUT_MS = 120000;
   const MIN_TIMEOUT_MS = 30000;
   const MAX_TIMEOUT_MS = 600000;
+  const STYLES = ['reborn', 'op4', 'op7'];             // the card styles; the first is the default
   const WINDOW_ID_NONE = -1;
 
   function createManager(deps) {
@@ -46,8 +47,19 @@
     function send(port, msg) {
       try { port.postMessage(msg); } catch (e) { log('warn', 'port send failed', e && e.message); }
     }
+    // The card style of the moment, from the settings the adapter keeps. Anything but one of the
+    // three names, or settings that cannot be read, counts as the default.
+    function cardStyle() {
+      let s = null;
+      try { s = getSettings(); } catch (e) { s = null; }
+      return s && STYLES.includes(s.style) ? s.style : STYLES[0];
+    }
+    // Every card but 'none' carries the request's clock (the card counts it down) and the card
+    // style of the moment, beside the card's own content.
     function card(rec, state, data) {
-      send(rec.port, { type: 'card', id: rec.id, card: Object.assign({ state }, data || {}) });
+      const msg = { type: 'card', id: rec.id, card: Object.assign({ state }, data || {}) };
+      if (state !== 'none') { msg.clock = { expires: rec.expires, total: rec.total }; msg.style = cardStyle(); }
+      send(rec.port, msg);
     }
     // Retire ONE request. Only when it is the popup owner does the owner slot change.
     function retire(rec) {
@@ -67,7 +79,7 @@
     function clampTimeout(t) {
       const n = Number(t);
       const ms = Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
-      return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, ms));
+      return Math.round(Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, ms)));
     }
 
     /* ---------- intake ---------- */
@@ -119,7 +131,9 @@
         else failReq(other, 'NotAllowedError', 'superseded by a newer request');
       }
       pending.set(rec.key, rec);
-      rec.timer = setT(() => failReq(rec, 'NotAllowedError', 'timed out'), clampTimeout(options.timeout));
+      rec.total = clampTimeout(options.timeout);         // the request's whole time: 30 s to 10 min, in whole milliseconds
+      rec.expires = now() + rec.total;
+      rec.timer = setT(() => failReq(rec, 'NotAllowedError', 'timed out'), rec.total);
       if (!isConnected()) return card(rec, 'not-connected');
       return rec.kind === 'create' ? startCreate(rec) : startGet(rec);
     }
@@ -440,5 +454,5 @@
     return { onConnect, handleFillItem, handleCapture, onTabActivated, onTabRemoved, onWindowFocusChanged, getState };
   }
 
-  return { createManager, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, WINDOW_ID_NONE };
+  return { createManager, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, WINDOW_ID_NONE, STYLES };
 });
