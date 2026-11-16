@@ -59,14 +59,14 @@
     if (typeof s.askSignIn === 'boolean') options.askSignIn = s.askSignIn;
     if (STYLES.includes(s.style)) options.style = s.style;
   }
-  let changed = false;                                // a change arrived before the first read answered: it is the newer one
+  let optionsChanged = false;                         // a change arrived before the first read answered: it is the newer one
   const optionsReady = new Promise((resolve) => {
     const unreadable = (why) => { console.warn(TAG, 'options unreadable, the defaults apply:', why); resolve(); };
     try {
       chrome.storage.local.get(OPTIONS_KEY, (r) => {
         const err = chrome.runtime.lastError;
         if (err) return unreadable(err.message || String(err));
-        if (!changed) follow(r && r[OPTIONS_KEY]);
+        if (!optionsChanged) follow(r && r[OPTIONS_KEY]);
         resolve();
       });
     } catch (e) { unreadable((e && e.message) || String(e)); }
@@ -74,7 +74,7 @@
   if (chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local' || !changes[OPTIONS_KEY]) return;
-      changed = true;
+      optionsChanged = true;
       follow(changes[OPTIONS_KEY].newValue);
     });
   }
@@ -267,16 +267,26 @@
   // for this opening and taken away again at once. Where the browser cannot open it (no
   // action.openPopup before Chrome 127, or no window to hang it on) a small window opens instead.
   const OPTIONS_PAGE = 'passkeys/options.html';
+  // Takes the popup off the button, so that its click is 1Password's. Never throws: a failure is logged.
+  async function giveButtonBack() {
+    try { await chrome.action.setPopup({ popup: '' }); }
+    catch (e) { console.warn(TAG, 'the options popup could not be taken off the toolbar button:', (e && e.message) || e); }
+  }
   async function openOptions() {
     try {
       if (!chrome.action || typeof chrome.action.openPopup !== 'function') throw new Error('action.openPopup is not available');
       await chrome.action.setPopup({ popup: OPTIONS_PAGE });
       try { await chrome.action.openPopup(); }
-      finally { await chrome.action.setPopup({ popup: '' }); }
+      finally { await giveButtonBack(); }
     } catch (e) {
+      console.info(TAG, 'the options open in a window, not as the popup:', (e && e.message) || e);
       chrome.windows.create({ url: chrome.runtime.getURL(OPTIONS_PAGE + '?window=1'), type: 'popup', width: 680, height: 580 }, () => void chrome.runtime.lastError);
     }
   }
+  // The button's popup is the browser's state and outlives a worker run: a run that ended between
+  // the two setPopup calls above would leave the options on the left click. Every start takes
+  // the popup off again.
+  if (chrome.action && typeof chrome.action.setPopup === 'function') giveButtonBack();
 
   /* ---------- context menu of the toolbar button: "Options…", and "1Password passkeys" → Re-save <title> / Discard all while a recovery copy is held ---------- */
   const OPTIONS_ID = 'op4pk-options';

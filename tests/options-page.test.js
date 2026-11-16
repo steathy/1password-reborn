@@ -14,13 +14,15 @@ const KEY = 'op4pk.plain';
 const copy = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
 
 // opts.readError / opts.writeError: chrome.runtime.lastError is set in that callback; opts.throws: local.get throws;
-// opts.query: the page's address ends with it ('?window=1').
+// opts.query: the page's address ends with it ('?window=1'); opts.delay: storage answers after that many
+// milliseconds, a read with a snapshot taken at call time (like chrome.storage), instead of at once.
 function page(stored, opts = {}) {
   const dom = new JSDOM(read('passkeys/options.html'), { url: 'chrome-extension://abc/passkeys/options.html' + (opts.query || ''), runScripts: 'outside-only' });
   const w = dom.window;
   const store = stored === undefined ? {} : { [KEY]: copy(stored) };
   const calls = { get: 0, set: [] };
   const changed = [];
+  const answer = (fn) => { if (opts.delay) setTimeout(fn, opts.delay); else fn(); };
   const chrome = {
     runtime: { lastError: undefined },
     storage: {
@@ -28,14 +30,19 @@ function page(stored, opts = {}) {
         get: (k, cb) => {
           calls.get++;
           if (opts.throws) throw new Error('storage unavailable');
-          if (opts.readError) chrome.runtime.lastError = { message: 'boom-read' };
-          try { cb(opts.readError ? {} : copy({ [k]: store[k] })); } finally { chrome.runtime.lastError = undefined; }
+          const snap = opts.readError ? {} : copy({ [k]: store[k] });
+          answer(() => {
+            if (opts.readError) chrome.runtime.lastError = { message: 'boom-read' };
+            try { cb(snap); } finally { chrome.runtime.lastError = undefined; }
+          });
         },
         set: (o, cb) => {
           calls.set.push(copy(o));
-          if (opts.writeError) chrome.runtime.lastError = { message: 'boom-write' };
-          else Object.assign(store, copy(o));
-          try { cb(); } finally { chrome.runtime.lastError = undefined; }
+          answer(() => {
+            if (opts.writeError) chrome.runtime.lastError = { message: 'boom-write' };
+            else Object.assign(store, copy(o));
+            try { cb(); } finally { chrome.runtime.lastError = undefined; }
+          });
         },
       },
       onChanged: { addListener: (f) => changed.push(f) },
@@ -101,7 +108,7 @@ test('a change is saved at once, over a fresh read, and only that option changes
   p.click(p.el('updateLogin'));
   assert.deepEqual(p.calls.set, [{ [KEY]: { updateLogin: true, askSignIn: true, style: 'op4' } }]);
   assert.deepEqual(p.state(), { updateLogin: true, askSignIn: true, style: 'op4', sample: 'options-sample.html?style=op4&update=1', status: '' });
-  // meanwhile the menu changed another option: the next change on the page keeps it
+  // meanwhile another copy of the page changed another option: the next change on this one keeps it
   p.store[KEY] = { updateLogin: true, askSignIn: false, style: 'op4' };
   p.click(p.radio('op7'));
   assert.deepEqual(p.calls.set[1], { [KEY]: { updateLogin: true, askSignIn: false, style: 'op7' } });
@@ -117,7 +124,41 @@ test('a change is saved at once, over a fresh read, and only that option changes
   assert.deepEqual(q.store[KEY], { updateLogin: false, askSignIn: false, style: 'op4' });
 });
 
-test('the page follows the menu: a change of the stored options from outside shows at once', () => {
+test('two changes made in quick succession are both saved: the second waits for the first', async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const p = page({ updateLogin: false, askSignIn: false, style: 'reborn' }, { delay: 15 });
+  await wait(40);                                                            // the read at the start has answered
+  p.click(p.el('updateLogin'));
+  await wait(5);
+  p.click(p.el('askSignIn'));                                                // before the first change has been written
+  await wait(150);
+  assert.deepEqual(p.store[KEY], { updateLogin: true, askSignIn: true, style: 'reborn' });
+  assert.deepEqual(p.state(), { updateLogin: true, askSignIn: true, style: 'reborn', sample: 'options-sample.html?style=reborn&update=1', status: '' });
+});
+
+test('a change that could not be saved does not stay on the controls: they show again what they showed before', () => {
+  let p = page({ updateLogin: false, askSignIn: false, style: 'reborn' }, { writeError: true });
+  p.click(p.radio('op7'));
+  p.click(p.el('updateLogin'));
+  assert.deepEqual(p.store[KEY], { updateLogin: false, askSignIn: false, style: 'reborn' });
+  let s = p.state();
+  assert.deepEqual([s.updateLogin, s.askSignIn, s.style, s.sample], [false, false, 'reborn', 'options-sample.html?style=reborn']);
+  assert.ok(s.status.includes('could not be saved') && s.status.includes('boom-write'));
+  // the same when the read before the write fails (the page then shows the defaults from the start)
+  p = page({ updateLogin: true, askSignIn: true, style: 'op7' }, { readError: true });
+  p.click(p.el('askSignIn'));
+  s = p.state();
+  assert.deepEqual([s.updateLogin, s.askSignIn, s.style], [false, false, 'reborn']);
+  assert.ok(s.status.includes('could not be saved') && s.status.includes('boom-read'));
+  assert.equal(p.calls.set.length, 0);
+});
+
+test('the sample cannot take the focus, so in the small window a click outside and Escape always reach the page', () => {
+  const p = page(undefined);
+  assert.equal(p.el('sample').hasAttribute('inert'), true);
+});
+
+test('the page follows changes from outside: a change of the stored options shows at once', () => {
   const p = page({ updateLogin: false, askSignIn: false, style: 'reborn' });
   p.fromOutside({ updateLogin: true, askSignIn: false, style: 'op7' });
   assert.deepEqual(p.state(), { updateLogin: true, askSignIn: false, style: 'op7', sample: 'options-sample.html?style=op7&update=1', status: '' });

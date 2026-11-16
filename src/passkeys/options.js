@@ -23,7 +23,9 @@
     }
     return o;
   }
+  let shown = optionsOf(null);                          // what the controls show: the last options read or saved
   function show(o) {
+    shown = o;
     boxes.updateLogin.checked = o.updateLogin;
     boxes.askSignIn.checked = o.askSignIn;
     radios.forEach((r) => { r.checked = r.value === o.style; });
@@ -42,21 +44,36 @@
       });
     } catch (e) { done(optionsOf(null), why(e)); }
   }
-  // One control changed. Written over a fresh read, so that only this option changes and what the
-  // menu stored meanwhile is kept; if the options cannot be read, nothing is written over them.
-  function change(name, value) {
-    const lost = (e) => say('The change could not be saved: ' + e);
+  // One control changed. Written over a fresh read, so that only this option changes and what
+  // another copy of this page stored meanwhile is kept; if the options cannot be read, nothing is
+  // written over them. Changes are written one after another, in the order they were made: a
+  // second one made before the first is stored would otherwise be written over a read that does
+  // not have the first yet. A change that could not be saved does not stay on the controls: they
+  // show again what they showed before it.
+  const waiting = [];
+  let writing = false;
+  function change(name, value) { waiting.push([name, value]); next(); }
+  function next() {
+    if (writing || !waiting.length) return;
+    writing = true;
+    const [name, value] = waiting.shift();
+    const done = (lost) => {
+      if (lost) { say('The change could not be saved: ' + lost); show(shown); }
+      writing = false;
+      next();
+    };
     read((o, failed) => {
-      if (failed) return lost(failed);
+      if (failed) return done(failed);
       o[name] = value;
       try {
         chrome.storage.local.set({ [KEY]: o }, () => {
           const err = chrome.runtime.lastError;
-          if (err) return lost(why(err));
+          if (err) return done(why(err));
           say('');
           show(o);
+          done();
         });
-      } catch (e) { lost(why(e)); }
+      } catch (e) { done(why(e)); }
     });
   }
   boxes.updateLogin.addEventListener('change', () => change('updateLogin', boxes.updateLogin.checked));

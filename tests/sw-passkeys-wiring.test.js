@@ -25,6 +25,9 @@ function boot(local, opts = {}) {
   const rec = (level) => (...a) => logs.push({ level, text: a.map(String).join(' ') });
   const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [], storage: [], rebuilds: 0, action: [], windows: [] };
   const store = { local: copy(local || {}), session: {} };
+  // opts.browser: what the browser keeps for the extension beyond one worker run (the popup of the
+  // toolbar button); two boots of one test share it to play a worker restart.
+  const browser = opts.browser || { popup: '' };
   // opts.asyncLocal: local.get answers later with a snapshot taken at call time (like chrome.storage);
   // opts.localError: chrome.runtime.lastError is set in the callbacks of local.get and local.set (true),
   //   of the first local.get only ('first-read'), or of local.set only ('write');
@@ -58,9 +61,19 @@ function boot(local, opts = {}) {
   });
   const chrome = {
     runtime: { lastError: undefined, onConnect: listener(), getURL: (p) => 'chrome-extension://abc/' + p },
-    // opts.noOpenPopup: a browser without action.openPopup; opts.openPopupFails: it rejects (no window to hang the popup on)
-    action: Object.assign({ setPopup: (o) => { calls.action.push(['setPopup', o.popup]); return Promise.resolve(); } },
-      opts.noOpenPopup ? {} : { openPopup: () => { calls.action.push(['openPopup']); return opts.openPopupFails ? Promise.reject(new Error('no window')) : Promise.resolve(); } }),
+    // opts.noOpenPopup: a browser without action.openPopup; opts.openPopupFails: it rejects (no window to hang the popup on);
+    // opts.openPopupHangs: it never answers (the worker run ends while it waits); opts.resetFails: setPopup('') rejects
+    action: Object.assign({ setPopup: (o) => {
+      calls.action.push(['setPopup', o.popup]);
+      if (o.popup === '' && opts.resetFails) return Promise.reject(new Error('boom-reset'));
+      browser.popup = o.popup;
+      return Promise.resolve();
+    } },
+      opts.noOpenPopup ? {} : { openPopup: () => {
+        calls.action.push(['openPopup']);
+        if (opts.openPopupHangs) return new Promise(() => {});
+        return opts.openPopupFails ? Promise.reject(new Error('no window')) : Promise.resolve();
+      } }),
     storage: { local: area('local'), session: area('session'), onChanged: listener() },
     tabs: { query: (q, cb) => cb([{ id: 5, windowId: 1 }]), onActivated: listener(), onRemoved: listener() },
     windows: { WINDOW_ID_NONE: -1, onFocusChanged: listener(), create: (o, cb) => { calls.windows.push(copy(o)); if (cb) cb({ id: 99 }); } },
@@ -369,18 +382,20 @@ test('menu: Options… at the top level always; "1Password passkeys" with Re-sav
   for (const old of ['op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-style:op7']) env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: old, checked: true });
   await ticks(10);
   assert.equal(env.store.local['op4pk.plain'], undefined);
-  assert.deepEqual(env.calls.action, []);
+  assert.deepEqual(env.calls.action, [['setPopup', '']]);                    // nothing but the reset of the worker start: no popup opened
   noErrors(env);
 });
 
 test('Options… opens the options as the popup of the toolbar button and gives the button back; where that cannot be done, a small window', async () => {
   const PAGE = 'passkeys/options.html';
   const click = (env) => env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });
+  const START = ['setPopup', ''];                      // every worker start takes the popup off the button (see the next test)
+  const said = (env, text) => env.logs.some((l) => l.level === 'info' && l.text.includes(text));
   let env = boot();
   await ticks(10);
   click(env);
   await ticks(10);
-  assert.deepEqual(env.calls.action, [['setPopup', PAGE], ['openPopup'], ['setPopup', '']]);   // set only for this opening: the button's click stays 1Password's
+  assert.deepEqual(env.calls.action, [START, ['setPopup', PAGE], ['openPopup'], ['setPopup', '']]);   // set only for this opening: the button's click stays 1Password's
   assert.deepEqual(env.calls.windows, []);
   noErrors(env);
   // the popup cannot be opened (no window to hang it on): the button is given back all the same, and a small window opens
@@ -388,16 +403,46 @@ test('Options… opens the options as the popup of the toolbar button and gives 
   await ticks(10);
   click(env);
   await ticks(10);
-  assert.deepEqual(env.calls.action, [['setPopup', PAGE], ['openPopup'], ['setPopup', '']]);
+  assert.deepEqual(env.calls.action, [START, ['setPopup', PAGE], ['openPopup'], ['setPopup', '']]);
   assert.deepEqual(env.calls.windows, [{ url: 'chrome-extension://abc/' + PAGE + '?window=1', type: 'popup', width: 680, height: 580 }]);
+  assert.ok(said(env, 'no window'));                   // the console says why it is a window this time
   noErrors(env);
-  // a browser without action.openPopup: the small window, and the button is never touched
+  // a browser without action.openPopup: the small window, and the button never gets the options popup
   env = boot({}, { noOpenPopup: true });
   await ticks(10);
   click(env);
   await ticks(10);
-  assert.deepEqual(env.calls.action, []);
+  assert.deepEqual(env.calls.action, [START]);
   assert.equal(env.calls.windows.length, 1);
+  assert.ok(said(env, 'action.openPopup is not available'));
+  noErrors(env);
+});
+
+test('a worker start takes the options popup off the toolbar button: a run that ended half-way cannot keep the left click', async () => {
+  const PAGE = 'passkeys/options.html';
+  const browser = { popup: '' };                       // the button's popup is the browser's state and outlives a worker run
+  let env = boot({}, { browser, openPopupHangs: true });
+  await ticks(10);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });
+  await ticks(10);
+  assert.equal(browser.popup, PAGE);                   // this run ends here, before it could give the button back
+  env = boot({}, { browser });                         // the next run of the worker
+  await ticks(10);
+  assert.equal(browser.popup, '');                     // the left click is 1Password's again
+  assert.deepEqual(env.calls.windows, []);
+  noErrors(env);
+});
+
+test('a popup that cannot be taken off the button is logged, and no window opens on top of the open popup', async () => {
+  const env = boot({}, { resetFails: true });
+  await ticks(10);
+  const warned = () => env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-reset')).length;
+  assert.equal(warned(), 1);                           // at the start
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });
+  await ticks(10);
+  assert.deepEqual(env.calls.action.slice(1), [['setPopup', 'passkeys/options.html'], ['openPopup'], ['setPopup', '']]);
+  assert.equal(warned(), 2);                           // after the opening
+  assert.deepEqual(env.calls.windows, []);             // the popup did open: nothing else opens
   noErrors(env);
 });
 
