@@ -43,15 +43,22 @@ function boot(local, opts = {}) {
     },
     set: (o, cb) => {
       calls.storage.push([name, 'set', Object.keys(o).join()]);
+      const changes = {};
+      for (const k of Object.keys(o)) {
+        changes[k] = { newValue: copy(o[k]) };
+        if (store[name][k] !== undefined) changes[k].oldValue = copy(store[name][k]);
+      }
       Object.assign(store[name], copy(o));
-      if (!cb) return;
-      if (name === 'local' && (opts.localError === true || opts.localError === 'write')) chrome.runtime.lastError = { message: 'boom-write' };
-      try { cb(); } finally { chrome.runtime.lastError = undefined; }
+      if (cb) {
+        if (name === 'local' && (opts.localError === true || opts.localError === 'write')) chrome.runtime.lastError = { message: 'boom-write' };
+        try { cb(); } finally { chrome.runtime.lastError = undefined; }
+      }
+      chrome.storage.onChanged.fns.forEach((f) => f(copy(changes), name));     // like chrome.storage.onChanged
     },
   });
   const chrome = {
     runtime: { lastError: undefined, onConnect: listener() },
-    storage: { local: area('local'), session: area('session') },
+    storage: { local: area('local'), session: area('session'), onChanged: listener() },
     tabs: { query: (q, cb) => cb([{ id: 5, windowId: 1 }]), onActivated: listener(), onRemoved: listener() },
     windows: { WINDOW_ID_NONE: -1, onFocusChanged: listener() },
     contextMenus: {
@@ -463,7 +470,8 @@ test('options: after a failed first read a click keeps what is stored and change
   assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: true, style: 'op4' });
   const c = connect(env);
   await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
-  assert.deepEqual([c.card().state, c.last('card').style], ['waiting', 'op4']);   // the click applies; the rest of this run stays at the defaults
+  assert.deepEqual([c.card().state, c.last('card').style], ['ask', 'op4']);       // the write is followed like any other: this run now uses what is stored
+  assert.deepEqual(env.calls.menus.filter((m) => m.checked).map((m) => m.id), ['op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-style:op4']);
   noErrors(env);
 });
 
@@ -505,4 +513,39 @@ test('fillItem hook: the engine never receives a passkey kept in a section; a ho
   env.sandbox.AgentHandlers.fillItem({ get item() { throw new Error('boom'); } });
   assert.equal(env.calls.filled.length, 1);                                    // fail closed: nothing filled
   assert.ok(env.logs.some((l) => l.level === 'error' && l.text.includes('fillItem hook failed')));
+});
+
+/* ---------- the options page writes the same key ---------- */
+
+test('options page: a change of the stored options from outside applies to the next card and to the marks in the menu', async () => {
+  const env = boot({ 'op4pk.plain': { updateLogin: false, askSignIn: false, style: 'reborn' } });
+  await ticks(10);
+  const ticked = () => env.calls.menus.filter((m) => m.checked).map((m) => m.id);
+  assert.deepEqual(ticked(), ['op4pk-style:reborn']);
+  env.chrome.storage.local.set({ 'op4pk.plain': { updateLogin: true, askSignIn: true, style: 'op7' } }, () => {});   // the options page
+  await ticks(10);
+  assert.deepEqual(ticked(), ['op4pk-opt:updateLogin', 'op4pk-opt:askSignIn', 'op4pk-style:op7']);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  assert.deepEqual(c.card(), { state: 'offer', site: 'webauthn.io', name: 'Alice', update: true });
+  assert.equal(c.last('card').style, 'op7');
+  await c.send({ type: 'decline', id: 'c1', how: 'cancel' });
+  await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.equal(c.card().state, 'ask');
+  assert.equal(env.calls.popup, 0);
+  // a later click in the menu changes only what was clicked: what the page stored stays
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-opt:askSignIn', checked: false });
+  await ticks(10);
+  assert.deepEqual(env.store.local['op4pk.plain'], { updateLogin: true, askSignIn: false, style: 'op7' });
+  assert.deepEqual(ticked(), ['op4pk-opt:updateLogin', 'op4pk-style:op7']);   // the marks are rebuilt after the menu's own clicks too
+  // values of the wrong kind are ignored one by one; other keys and the session area are not ours
+  env.chrome.storage.local.set({ 'op4pk.plain': { updateLogin: 'no', style: 'op4' } }, () => {});
+  env.chrome.storage.local.set({ 'op4pk.settings': { addToExisting: false } }, () => {});
+  env.chrome.storage.session.set({ 'op4pk.plain': { style: 'reborn' } }, () => {});
+  await ticks(10);
+  assert.deepEqual(ticked(), ['op4pk-opt:updateLogin', 'op4pk-style:op4']);
+  await c.send({ type: 'decline', id: 'g1', how: 'cancel' });
+  await c.send({ type: 'request', id: 'g2', kind: 'get', options: GET });
+  assert.deepEqual([c.card().state, c.last('card').style], ['waiting', 'op4']);
+  noErrors(env);
 });

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1Password Reborn: passkey options</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 28px 16px 40px; font: 14px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif; color: #1b1b1f; background: #f4f5f7; }
+  main { box-sizing: border-box; max-width: 640px; margin: 0 auto; background: #fff; border: 1px solid #c9c9d1; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.08); padding: 20px 24px 22px; }
+  h1 { font-size: 17px; margin: 0 0 14px; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; }
+  .opt input { margin-top: 3px; }
+  .opt b { font-weight: 600; display: block; }
+  .opt span, .foot { color: #52525b; font-size: 13px; }
+  hr { border: 0; border-top: 1px solid #e3e3e8; margin: 16px 0 14px; }
+  fieldset { border: 0; margin: 0 0 12px; padding: 0; }
+  legend { font-weight: 600; padding: 0; margin-bottom: 6px; }
+  .styles { display: flex; gap: 18px; flex-wrap: wrap; }
+  .styles label { display: flex; gap: 6px; align-items: center; }
+  iframe { display: block; border: 0; border-radius: 8px; width: 100%; height: 190px; background: #8d9199; }
+  @media (max-width: 630px) { iframe { height: 310px; } }   /* the sample's buttons stack in a narrow window */
+  .foot { margin-top: 12px; }
+  #status { margin-top: 10px; color: #c62828; font-size: 13px; }
+  #status:empty { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>1Password Reborn: passkey options</h1>
+  <label class="opt"><input type="checkbox" id="updateLogin"><div><b>Show "Update login" when saving</b><span>The save card then offers Register new and Update login.</span></div></label>
+  <label class="opt"><input type="checkbox" id="askSignIn"><div><b>Show "Sign in" when authenticating</b><span>A sign-in then starts with a Sign in button; the popup opens on the click.</span></div></label>
+  <hr>
+  <fieldset>
+    <legend>Card style</legend>
+    <div class="styles">
+      <label><input type="radio" name="style" value="reborn" checked> Reborn</label>
+      <label><input type="radio" name="style" value="op4"> 1Password 4</label>
+      <label><input type="radio" name="style" value="op7"> 1Password 7</label>
+    </div>
+  </fieldset>
+  <iframe id="sample" title="Sample of the save card" src="options-sample.html?style=reborn"></iframe>
+  <div class="foot">Sample of the save card. Changes are saved as you make them and apply to the next card.</div>
+  <div id="status" role="alert"></div>
+</main>
+<script src="options.js"></script>
+</body>
+</html>

@@ -51,17 +51,18 @@
   const STYLES = RM.STYLES;
   const options = { updateLogin: false, askSignIn: false, style: STYLES[0] };
   const touched = new Set();                          // the options the user has clicked in this worker run
+  // The valid values of a stored object, and nothing else.
+  function validOf(s) {
+    const o = {};
+    if (s && typeof s === 'object') {
+      if (typeof s.updateLogin === 'boolean') o.updateLogin = s.updateLogin;
+      if (typeof s.askSignIn === 'boolean') o.askSignIn = s.askSignIn;
+      if (STYLES.includes(s.style)) o.style = s.style;
+    }
+    return o;
+  }
   // done(stored, failed): what is stored, valid values only, and why it could not be read (else null).
   function readOptions(done) {
-    const validOf = (s) => {
-      const o = {};
-      if (s && typeof s === 'object') {
-        if (typeof s.updateLogin === 'boolean') o.updateLogin = s.updateLogin;
-        if (typeof s.askSignIn === 'boolean') o.askSignIn = s.askSignIn;
-        if (STYLES.includes(s.style)) o.style = s.style;
-      }
-      return o;
-    };
     try {
       chrome.storage.local.get(OPTIONS_KEY, (r) => {
         const err = chrome.runtime.lastError;
@@ -89,6 +90,16 @@
         chrome.storage.local.set({ [OPTIONS_KEY]: next }, () => { const err = chrome.runtime.lastError; if (err) lost(err.message || String(err)); });
       } catch (e) { lost((e && e.message) || String(e)); }
     }));
+  }
+  // The options page (passkeys/options.html) writes the same key. Every change of it is followed
+  // here, the worker's own writes included, and the menu is rebuilt so that its marks agree.
+  if (chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local' || !changes[OPTIONS_KEY]) return;
+      const stored = validOf(changes[OPTIONS_KEY].newValue);
+      for (const name of Object.keys(stored)) options[name] = stored[name];
+      rebuildMenus();
+    });
   }
   // Requests are handled only once the options and the focused window's active tab are known, so
   // the first request after a worker start is judged against the real tab (the owner's fill
