@@ -691,14 +691,27 @@ function Resolve-FirefoxPlan {
   #   both apps                     -> ask-app until -AppChoice is '4' or '7'
   #   neither                       -> ask-anyway until -AnywayAnswer; 'y' -> open-signed, else declined
   #   no Firefox                    -> no-firefox
+  # The 1Password 7 edition and the plain edition (-EditionKey 1p7 or plain) have one unsigned build:
+  #   1Password 7 found             -> open-unsigned in Developer Edition/Nightly/ESR; release only -> needs-dev-edition
+  #   no 1Password 7                -> ask-anyway until -AnywayAnswer; 'y' -> as above, else declined
   param(
     [array]$Firefoxes,
     [bool]$HasOP4,
     $OP7Version,
     [string]$AppChoice = '',
-    [string]$AnywayAnswer = ''
+    [string]$AnywayAnswer = '',
+    [string]$EditionKey = 'main'
   )
   if (-not $Firefoxes -or $Firefoxes.Count -eq 0) { return @{ Action = 'no-firefox' } }
+  if ($EditionKey -and $EditionKey -ne 'main') {
+    if ($null -eq $OP7Version) {
+      if ($AnywayAnswer -eq '') { return @{ Action = 'ask-anyway' } }
+      if ($AnywayAnswer.Trim().ToLower() -ne 'y') { return @{ Action = 'declined' } }
+    }
+    $ff = $Firefoxes | Where-Object { $_.Unsigned } | Select-Object -First 1
+    if ($ff) { return @{ Action = 'open-unsigned'; Firefox = $ff; Xpi = $Editions[$EditionKey].Xpi } }
+    return @{ Action = 'needs-dev-edition' }
+  }
   $hasOP7 = ($null -ne $OP7Version)
   $app = ''
   if ($HasOP4 -and $hasOP7) {
@@ -734,14 +747,15 @@ function Open-FirefoxXpi($payload, $plan) {
   Write-Mid 'To remove it later: about:addons.' 'Gray'
 }
 
-function Install-Firefox($payload) {
+function Install-Firefox($payload, [string]$EditionKey = 'main') {
+  if (-not $EditionKey) { $EditionKey = 'main' }
   Clear-Host
   Write-Mid '=== Firefox ===' 'Cyan'
   Write-Host ''
   $ffs  = Get-FirefoxInstalls
   $op4  = Test-OP4Installed
   $op7  = Get-OP7Version
-  $plan = Resolve-FirefoxPlan -Firefoxes $ffs -HasOP4 $op4 -OP7Version $op7
+  $plan = Resolve-FirefoxPlan -Firefoxes $ffs -HasOP4 $op4 -OP7Version $op7 -EditionKey $EditionKey
   if ($plan.Action -eq 'ask-app') {
     Write-Mid 'Both 1Password 4 and 1Password 7 are installed.' 'White'
     Write-Mid 'Which one should Firefox pair with?' 'White'
@@ -754,12 +768,19 @@ function Install-Firefox($payload) {
     if ($plan.Action -eq 'ask-app') { Write-Mid 'No choice made. Nothing was opened.' 'Gray'; return }
   }
   if ($plan.Action -eq 'ask-anyway') {
-    Write-Mid 'No 1Password 4 or 1Password 7 app was found on this PC.' 'Yellow'
-    Write-Mid 'The extension needs one of them to do anything.' 'Gray'
+    if ($EditionKey -eq 'main') {
+      Write-Mid 'No 1Password 4 or 1Password 7 app was found on this PC.' 'Yellow'
+      Write-Mid 'The extension needs one of them to do anything.' 'Gray'
+      $q = 'Open the signed Firefox build anyway? [y/N]'
+    } else {
+      Write-Mid 'No 1Password 7 app was found on this PC.' 'Yellow'
+      Write-Mid ('The ' + $Editions[$EditionKey].Name + ' needs 1Password 7.') 'Gray'
+      $q = 'Open its Firefox build anyway? [y/N]'
+    }
     Write-Host ''
-    $a = (Read-Host ((' ' * (Get-Margin)) + 'Open the signed Firefox build anyway? [y/N]')).Trim()
+    $a = (Read-Host ((' ' * (Get-Margin)) + $q)).Trim()
     if ($a -eq '') { $a = 'n' }
-    $plan = Resolve-FirefoxPlan -Firefoxes $ffs -HasOP4 $op4 -OP7Version $op7 -AnywayAnswer $a
+    $plan = Resolve-FirefoxPlan -Firefoxes $ffs -HasOP4 $op4 -OP7Version $op7 -AnywayAnswer $a -EditionKey $EditionKey
   }
   switch ($plan.Action) {
     'no-firefox' {

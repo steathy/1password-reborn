@@ -177,3 +177,62 @@ describe('install.ps1: the app gate, the answers and the menus', { skip: SKIP },
     assert.deepEqual(R[53], []);
   });
 });
+
+const PF = process.env.ProgramFiles || 'C:\\Program Files';
+const ffExe = (dir) => dir + '\\firefox.exe';
+const ffPrefs = (dir) => dir + '\\defaults\\pref\\channel-prefs.js';
+const DIR_REL = PF + '\\Mozilla Firefox';
+const DIR_DEVED = PF + '\\Firefox Developer Edition';
+const FF_REL = { Name: 'Firefox', Exe: ffExe(DIR_REL), Channel: 'release', Unsigned: false };
+const FF_ESR_ = { Name: 'Firefox ESR', Exe: ffExe(DIR_REL), Channel: 'esr', Unsigned: true };
+const FF_DEVED = { Name: 'Firefox Developer Edition', Exe: ffExe(DIR_DEVED), Channel: 'aurora', Unsigned: true };
+const OP7_KEY = 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\1Password';
+const PAYLOAD_DIR = 'C:\\op4-test-payload';
+const XPI_1P7 = 'dist\\firefox\\1password-reborn-firefox-1p7.xpi';
+const XPI_PLAIN = 'dist\\firefox\\1password-reborn-firefox-plain.xpi';
+const ffPlan = (edition, firefoxes, hasOP4, op7, extra = {}) => ({ fn: 'plan', edition, firefoxes, hasOP4, op7, appChoice: '', anyway: '', ...extra });
+
+describe('install.ps1: Firefox for each edition', { skip: SKIP }, () => {
+  let R;
+  before(() => {
+    R = runCases([
+      /* 0 */ ffPlan('1p7', [FF_REL, FF_DEVED], false, '7.9.834'),
+      /* 1 */ ffPlan('plain', [FF_ESR_], false, '7.9.834'),
+      /* 2 */ ffPlan('plain', [FF_REL], false, '7.9.834'),
+      /* 3 */ ffPlan('1p7', [FF_DEVED], false, null),
+      /* 4 */ ffPlan('1p7', [FF_DEVED], false, null, { anyway: 'n' }),
+      /* 5 */ ffPlan('1p7', [FF_DEVED], false, null, { anyway: 'y' }),
+      /* 6 */ ffPlan('1p7', [FF_REL, FF_DEVED], true, '7.4.767'),
+      /* 7 */ ffPlan('plain', [], false, '7.9.834'),
+      /* 8 */ ffPlan('main', [FF_REL, FF_DEVED], true, '7.4.767'),
+      /* 9 */ { fn: 'install', edition: 'plain', payload: PAYLOAD_DIR, paths: [ffExe(DIR_DEVED), ffPrefs(DIR_DEVED), PAYLOAD_DIR + '\\' + XPI_PLAIN],
+                channels: { [ffPrefs(DIR_DEVED)]: 'aurora' }, versions: { [OP7_KEY]: '7.9.834' }, answers: [''] },
+      /* 10 */ { fn: 'install', edition: '1p7', payload: PAYLOAD_DIR, paths: [ffExe(DIR_DEVED), ffPrefs(DIR_DEVED), PAYLOAD_DIR + '\\' + XPI_1P7],
+                channels: { [ffPrefs(DIR_DEVED)]: 'aurora' }, versions: {}, answers: ['n'] },
+      /* 11 */ { fn: 'install', edition: 'plain', payload: PAYLOAD_DIR, paths: [ffExe(DIR_DEVED), ffPrefs(DIR_DEVED)],
+                channels: { [ffPrefs(DIR_DEVED)]: 'aurora' }, versions: { [OP7_KEY]: '7.9.834' }, answers: [''] },
+    ]);
+  });
+
+  it("the 1Password 7 edition and the plain edition open their own unsigned build in Developer Edition, Nightly or ESR", () => {
+    assert.deepEqual(R[0], { Action: 'open-unsigned', Firefox: 'Firefox Developer Edition', Xpi: XPI_1P7 });
+    assert.deepEqual(R[1], { Action: 'open-unsigned', Firefox: 'Firefox ESR', Xpi: XPI_PLAIN });
+    assert.deepEqual(R[2], { Action: 'needs-dev-edition', Firefox: null, Xpi: null });
+    assert.deepEqual(R[6], { Action: 'open-unsigned', Firefox: 'Firefox Developer Edition', Xpi: XPI_1P7 });   // no question about 1Password 4
+    assert.deepEqual(R[7], { Action: 'no-firefox', Firefox: null, Xpi: null });
+  });
+  it('without 1Password 7 they ask [y/N] first; Reborn keeps its own table', () => {
+    assert.deepEqual([R[3], R[4], R[5]].map((r) => r.Action), ['ask-anyway', 'declined', 'open-unsigned']);
+    assert.equal(R[8].Action, 'ask-app');
+  });
+  it('Install-Firefox opens the edition build, or asks about the missing 1Password 7, or reports a missing XPI', () => {
+    assert.equal(R[9].Error, null);
+    assert.deepEqual(R[9].Started, [{ exe: ffExe(DIR_DEVED), args: '"' + PAYLOAD_DIR + '\\' + XPI_PLAIN + '"' }]);
+    assert.match(R[9].Output, /xpinstall\.signatures\.required/);
+    assert.deepEqual(R[10].Started, []);
+    assert.match(R[10].Output, /No 1Password 7 app was found on this PC\./);
+    assert.match(R[10].Output, /Nothing was opened/);
+    assert.deepEqual(R[11].Started, []);
+    assert.match(R[11].Error, /Missing .*1password-reborn-firefox-plain\.xpi/);
+  });
+});

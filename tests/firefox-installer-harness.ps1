@@ -11,6 +11,7 @@
     { "fn": "op7" }                              -> { Version: "7.3.657" | null }
     { "fn": "plan", "firefoxes": [...], "hasOP4": bool, "op7": "7.3.657"|null, "appChoice": "", "anyway": "" }
     { "fn": "install", "payload": "C:\\op4-test-payload" }  -> Install-Firefox with all mocks; { Started, Output, Error }
+  "plan" and "install" take an optional "edition" (main, 1p7, plain; missing = main).
   The editions (tests/installer-editions.test.js):
     { "fn": "tags", "releases": [...] | "unreadable": true }  -> Select-ReleaseTags per edition
     { "fn": "edition-of", "versionName": "..." }             -> Get-EditionOfVersionName
@@ -70,7 +71,7 @@ foreach ($c in @($cases)) {
   foreach ($p in @($c.paths)) { if ($p) { $script:MockPaths[[string]$p] = $true } }
   if ($c.channels) { foreach ($prop in $c.channels.PSObject.Properties) { $script:MockChannels[$prop.Name] = $prop.Value } }
   if ($c.versions) { foreach ($prop in $c.versions.PSObject.Properties) { $script:MockVersions[$prop.Name] = $prop.Value } }
-  if ($c.answers)  { $script:Answers = @($c.answers) }
+  if ($null -ne $c.answers) { $script:Answers = @($c.answers) }   # (a lone '' is an answer too: Enter)
   switch ($c.fn) {
     'installs' {
       $found = Get-FirefoxInstalls   # direct assignment: the function already returns one array; @(...) would nest it
@@ -83,12 +84,12 @@ foreach ($c in @($cases)) {
     'plan' {
       $op7 = $null; if ($c.op7) { $op7 = [version]$c.op7 }
       $plan = Resolve-FirefoxPlan -Firefoxes (ConvertTo-Firefoxes $c.firefoxes) -HasOP4 ([bool]$c.hasOP4) -OP7Version $op7 `
-                -AppChoice ([string]$c.appChoice) -AnywayAnswer ([string]$c.anyway)
+                -AppChoice ([string]$c.appChoice) -AnywayAnswer ([string]$c.anyway) -EditionKey ([string]$c.edition)
       $results += @{ Action = $plan.Action; Firefox = $(if ($plan.Firefox) { $plan.Firefox.Name } else { $null }); Xpi = $plan.Xpi }
     }
     'install' {
       $err = $null
-      try { Install-Firefox ([string]$c.payload) } catch { $err = $_.Exception.Message }
+      try { Install-Firefox ([string]$c.payload) ([string]$c.edition) } catch { $err = $_.Exception.Message }
       $results += @{ Started = @($script:Started); Output = ($script:Output -join "`n"); Error = $err }
     }
     'tags' {
