@@ -1,22 +1,27 @@
 #!/usr/bin/env node
 'use strict';
 /*
- * 1pif-to-bitwarden.js — turn a 1Password 4 **1PIF** export into a Bitwarden JSON
+ * 1pif-to-bitwarden.js — turn a 1Password **1PIF** export into a Bitwarden JSON
  * import that restores the passkeys as working Bitwarden passkeys.
  *
  *   node tools/1pif-to-bitwarden.js <export.1pif> <out.json>
  *   then Bitwarden → Tools → Import data → "Bitwarden (json)"
  *
+ * Exports: 1Password 7 for Windows - select the items, right-click → Export →
+ * 1Password Interchange Format (.1pif); 1Password 4 - File → Export.
  * Both export layouts are read: the classic 1PIF records, and the OPVault-style JSON
- * that 1Password 4.6 for Windows writes. Only items carrying a `passkey` field are
- * converted, and items in the trash (`trashed: true`) are skipped. The tool refuses to
+ * that 1Password 4.6 for Windows writes. Only items carrying a passkey are converted
+ * (a `passkey` field, or a `passkey` field in a section such as 1Password 7's
+ * "Saved on <site>"), and items in the trash (`trashed: true`) are skipped. The tool refuses to
  * run when the output path is the input file. CSV exports are not supported: 1Password 4's CSV drops web-form fields.
  * The 1PIF file is PLAIN TEXT; delete both files after importing.
  *
  * WARNING: before importing the rest of the vault with Bitwarden's own "1Password
- * (1pif)" importer, delete or exclude the passkey items from that export. The app
- * stores the passkey as the item's password, so that importer would copy the
- * private-key JSON into a visible Bitwarden password.
+ * (1pif)" importer, delete or exclude the passkey items from that export. Older Reborn
+ * items store the passkey as the item's password, and 1Password 7 edition items keep it
+ * in a "Saved on <site>" text field; that importer would copy the private-key JSON into a
+ * visible Bitwarden password or custom field. This tool already carries a 1Password 7
+ * edition item's own password.
  */
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -38,13 +43,38 @@ function fieldsOf(item) {
   if (item.details && Array.isArray(item.details.fields)) return item.details.fields;
   return [];
 }
-function passkeyOf(item) {
-  const f = fieldsOf(item).find((x) => x && x.name === 'passkey' && typeof x.value === 'string');
-  if (!f) return null;
+function sectionFieldsOf(item) {
+  const sections = (item.secureContents && Array.isArray(item.secureContents.sections) && item.secureContents.sections)
+    || (item.details && Array.isArray(item.details.sections) && item.details.sections) || [];
+  const out = [];
+  for (const s of sections) if (s && Array.isArray(s.fields)) for (const f of s.fields) if (f && typeof f === 'object') out.push(f);
+  return out;
+}
+function parsePasskey(value) {
+  if (typeof value !== 'string') return null;
   let p;
-  try { p = JSON.parse(f.value); } catch (e) { return null; }
+  try { p = JSON.parse(value); } catch (e) { return null; }
   if (!p || p.v !== 1 || typeof p.keyValue !== 'string' || typeof p.credentialId !== 'string' || typeof p.rpId !== 'string') return null;
   return p;
+}
+// Reborn's main version keeps the passkey in a `passkey` web form field; the 1Password 7 edition
+// saves it as a text field that 1Password 7 puts in the "Saved on <site>" section ({k, n, t, v}).
+function passkeyOf(item) {
+  const f = fieldsOf(item).find((x) => x && x.name === 'passkey' && typeof x.value === 'string');
+  const fromField = f ? parsePasskey(f.value) : null;
+  if (fromField) return fromField;
+  for (const s of sectionFieldsOf(item)) {
+    if (s.t !== 'passkey' && s.n !== 'passkey') continue;
+    const p = parsePasskey(s.v);
+    if (p) return p;
+  }
+  return null;
+}
+// The login's own password (1Password 7 edition: a passkey next to a password); older passkey items
+// store the passkey AS the password, which is never copied into a Bitwarden password.
+function passwordOf(item) {
+  const f = fieldsOf(item).find((x) => x && x.designation === 'password' && typeof x.value === 'string' && x.value);
+  return f && !parsePasskey(f.value) ? f.value : null;
 }
 function usernameOf(item) {
   const f = fieldsOf(item).find((x) => x && x.designation === 'username');
@@ -77,7 +107,7 @@ function convert(text, stats) {
       login: {
         uris: [{ match: null, uri: item.location || uriOf(item) || ('https://' + p.rpId) }],
         username: usernameOf(item) || p.userName || null,
-        password: null,
+        password: passwordOf(item),
         totp: null,
         fido2Credentials: [cred],
       },
@@ -87,7 +117,7 @@ function convert(text, stats) {
   return { encrypted: false, folders: [], items };
 }
 
-module.exports = { parse1pif, passkeyOf, convert, FIDO2_KEYS };
+module.exports = { parse1pif, passkeyOf, passwordOf, convert, FIDO2_KEYS };
 
 if (require.main === module) {
   const [input, output] = process.argv.slice(2);

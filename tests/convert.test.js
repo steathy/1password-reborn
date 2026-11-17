@@ -117,3 +117,29 @@ test('CLI refuses to overwrite its input file', () => {
     assert.equal(fs.readFileSync(inFile, 'utf8'), 'original');
   }
 });
+
+test('convert reads a 1Password 7 edition item: passkey in a section text field, the login password kept', async () => {
+  const made = await A.makeCredential({
+    rp: { id: 'webauthn.io', name: 'webauthn.io' },
+    user: { id: A.b64url.encode(Uint8Array.from([9, 1])), name: 'sky7', displayName: 'sky7' },
+    challenge: A.b64url.encode(new Uint8Array(32)), pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+  }, 'https://webauthn.io');
+  const json = A.encodePasskeyField(made.passkey);
+  const classic = { uuid: 'D4', title: 'Webauthn', location: 'https://webauthn.io/', typeName: 'webforms.WebForm',
+    secureContents: {
+      fields: [
+        { name: 'username', value: 'sky7', type: 'T', designation: 'username' },
+        { name: 'password', value: 'hunter2', type: 'P', designation: 'password' }],
+      sections: [{ name: 'Saved on webauthn.io', title: 'Saved on webauthn.io', fields: [{ k: 'string', n: 'passkey', t: 'passkey', v: json }] }] } };
+  const opvault = { category: '001', uuid: 'E5', overview: { title: 'Webauthn', url: 'https://webauthn.io/' },
+    details: {
+      fields: [{ designation: 'username', type: 'T', name: 'username', value: 'sky7' }],
+      sections: [{ title: 'Saved on webauthn.io', fields: [{ k: 'string', n: 'x1', t: 'passkey', v: json }] }] } };
+  const out = convert([JSON.stringify(classic), SEP, JSON.stringify(opvault), SEP, ''].join('\r\n'));
+  assert.equal(out.items.length, 2);
+  assert.equal(out.items[0].login.password, 'hunter2');
+  assert.equal(out.items[0].login.fido2Credentials[0].keyValue, made.passkey.keyValue);
+  assert.equal(out.items[1].login.password, null);
+  assert.equal(out.items[1].login.username, 'sky7');
+  assert.equal(out.items[1].login.fido2Credentials[0].credentialId, made.passkey.credentialId);
+});
