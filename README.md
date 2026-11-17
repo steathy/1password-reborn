@@ -468,7 +468,7 @@ Plain edition (1.7.0-plain): verified on the VM with 1Password 7.9.834 in Chrome
 
 ## Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.7.0-plain**.
+See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.8.0-plain**.
 
 ## License
 

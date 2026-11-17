@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
-## [1.8.0-plain] - unreleased
+## [1.8.0-plain] - 2026-11-17
 
 Plain edition, branch `1pass7-plain` (1Password 7 for Windows only). The extension of 1.7.0-plain,
 released again under the version number that the three editions now share (Reborn 1.8.0, the
