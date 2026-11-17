@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const A = require(path.join(__dirname, '..', 'src', 'passkeys', 'authenticator.js'));
-const { createManager } = require(path.join(__dirname, '..', 'src', 'passkeys', 'request-manager.js'));
+const RM = require(path.join(__dirname, '..', 'src', 'passkeys', 'request-manager.js'));
+const { createManager } = RM;
 
 const ORIGIN = 'https://login.example.com';
 const PAGE = ORIGIN + '/login';
@@ -62,6 +63,7 @@ function harness(opts = {}) {
     autosave: (login, doc, url) => calls.autosave.push({ login, doc, url }),
     isConnected: () => connected,
     isNativeApp: () => opts.nativeApp === true,
+    getSettings: () => ({ style: opts.style }),           // read at every call: a test may change opts.style
     getActive: () => active,
     hasFocus: () => focus,
     setTimeout: (fn, ms) => { const h = { fn, ms, cleared: false }; timers.push(h); return h; },
@@ -778,4 +780,82 @@ test('no browser window has the focus: a sign-in waits as busy with no popup and
     q.emit({ type: 'request', id: 'g3', kind: 'get', options: getOptions() });
     assert.equal(q.state(), 'waiting', String(hasFocus));
   }
+});
+
+/* ---------- reborn ports: the request clock and the card style (design 1) ---------- */
+
+test('every card message but none carries the request clock and the card style; the timeout keeps its 30 s to 10 min', async () => {
+  const T0 = 1700000000000;                                                // the harness clock
+  assert.deepEqual(RM.STYLES, ['reborn', 'op4', 'op7']);
+  assert.equal(RM.MAX_TIMEOUT_MS, 600000);                                 // no 120-second cap on this branch
+  let h = harness(); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions({ timeout: 60000 }) });
+  const msg = p.last('card');
+  assert.deepEqual(msg.clock, { expires: T0 + 60000, total: 60000 });
+  assert.equal(msg.style, 'reborn');
+  assert.equal(h.timers[0].ms, 60000);
+  p.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => p.state() === 'create-saving', 'saving card');
+  assert.deepEqual(p.last('card').clock, { expires: T0 + 60000, total: 60000 });   // the same clock on the next card
+  p.emit({ type: 'decline', id: 'c1', how: 'cancel' });
+  assert.deepEqual(p.last('card'), { type: 'card', id: 'c1', card: { state: 'none' } });   // the message that takes the card away carries neither
+  for (const [timeout, total] of [[undefined, 120000], [5000, 30000], [121000, 121000], [600000, 600000], [10000000, 600000], [90000, 90000], [45000.4, 45000]]) {
+    h = harness({ style: 'op7' }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions(timeout === undefined ? {} : { timeout }) });
+    assert.deepEqual(p.last('card').clock, { expires: T0 + total, total }, String(timeout));
+    assert.equal(p.last('card').style, 'op7', String(timeout));
+    assert.equal(h.timers[0].ms, total, String(timeout));
+  }
+  for (const [style, want] of [['op4', 'op4'], ['op7', 'op7'], ['reborn', 'reborn'], ['neon', 'reborn'], ['constructor', 'reborn'], [7, 'reborn'], [undefined, 'reborn']]) {
+    h = harness({ style }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions() });
+    assert.equal(p.last('card').style, want, String(style));
+  }
+  // settings that cannot be read, or none at all: the Reborn style
+  for (const getSettings of [undefined, () => { throw new Error('storage'); }, () => null, () => 'op7']) {
+    const m = createManager({
+      authenticator: A, index: { get: () => [], add() {} }, recovery: { async put() {}, async remove() {} },
+      showPopup: () => {}, autosave: () => {}, isConnected: () => true, getActive: () => ({ tabId: 1, windowId: 10 }),
+      setTimeout: () => ({}), clearTimeout: () => {}, getSettings,
+    });
+    const q = makePort(2, { id: 1, windowId: 10 }); m.onConnect(q);
+    q.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+    assert.deepEqual([q.state(), q.last('card').style, q.last('card').clock.total], ['create-prompt', 'reborn', 120000], String(getSettings));
+  }
+});
+
+test('the clock and the style ride on each of the nine cards; the style is the one of the moment', async () => {
+  const T0 = 1700000000000;
+  const v = await vaultItem();
+  const opts = { nativeApp: true, style: 'op7',
+    index: { 'example.com': [{ credentialId: CRED, userName: 'alice', seenAt: 1 }, { credentialId: v.made.credentialId, userName: 'alice', seenAt: 1 }] } };
+  const h = harness(opts);
+  const a = makePort(1, { id: 1, windowId: 10 }); const b = makePort(2, { id: 2, windowId: 10 });   // tab 1 is the visible one
+  h.m.onConnect(a); h.m.onConnect(b);
+  const frames = (p) => p.sent.filter((x) => x.type === 'card' && x.card.state !== 'none')
+    .map((x) => [x.card.state, x.clock && x.clock.total, x.clock && x.clock.expires - T0, x.style]);
+  // a save on the visible tab, through every card a save has
+  a.emit({ type: 'request', id: 'c0', kind: 'create', options: createOptions({ timeout: 45000, excludeCredentials: [{ type: 'public-key', id: idOf(CRED) }] }) });
+  a.emit({ type: 'decline', id: 'c0', how: 'fallback' });
+  a.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions({ timeout: 45000 }) });
+  b.emit({ type: 'request', id: 'g2', kind: 'get', options: getOptions({ timeout: 600000, allowCredentials: [{ type: 'public-key', id: idOf(OTHER) }] }) });   // a sign-in in a background tab: its first question
+  opts.style = 'op4';                                                      // the user changes the style meanwhile
+  b.emit({ type: 'approve', id: 'g2', stage: 'prompt' });                  // Yes in the background tab: busy
+  a.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });       // Save in 1Password
+  await until(() => a.state() === 'create-saving', 'saving card');
+  a.emit({ type: 'approve', id: 'c1', stage: 'saving' });                  // Done
+  // a sign-in on the visible tab: waiting, a notice, the last question; then 1Password goes away
+  a.emit({ type: 'request', id: 'g1', kind: 'get', options: getOptions({ timeout: 45000 }) });
+  h.m.handleFillItem({ item: { uuid: 'x', secureContents: { fields: [{ name: 'username', value: 'a', type: 'T' }] } } });
+  h.m.handleFillItem({ item: v.copy() });
+  await until(() => a.state() === 'confirm', 'confirm card');
+  a.emit({ type: 'decline', id: 'g1', how: 'cancel' });
+  h.setConnected(false);
+  a.emit({ type: 'request', id: 'g3', kind: 'get', options: getOptions({ timeout: 45000 }) });
+  assert.deepEqual(frames(a), [
+    ['create-excluded', 45000, 45000, 'op7'], ['create-prompt', 45000, 45000, 'op7'], ['create-saving', 45000, 45000, 'op4'],
+    ['waiting', 45000, 45000, 'op4'], ['notice', 45000, 45000, 'op4'], ['confirm', 45000, 45000, 'op4'], ['not-connected', 45000, 45000, 'op4'],
+  ]);
+  assert.deepEqual(frames(b), [['get-prompt', 600000, 600000, 'op7'], ['busy', 600000, 600000, 'op4']]);
+  assert.equal(new Set(frames(a).concat(frames(b)).map((f) => f[0])).size, 9);    // every card the branch has
 });
