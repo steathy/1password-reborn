@@ -96,3 +96,24 @@ test('a request id sent again right behind the Save click: the aborted save is n
   await until(() => c.card().state === 'create-saving', 'its saving card');
   noErrors(env);
 });
+
+/* ---------- reborn ports: design 7 through the adapter ---------- */
+
+test('a sign-in from a background tab waits: no popup, the visible tab fills as usual; switching to it opens the popup', async () => {
+  const known = { 'op4pk.index': { 'example.com': [{ credentialId: 'd0a4b7a6-5d1e-4a9f-9b1a-0a4c2a6f1e2b', userName: 'alice', seenAt: 1 }] } };
+  const env = boot(known);                                                     // the active tab is 5
+  await ticks(5);
+  const bg = connect(env, 6, 'https://example.com');
+  await bg.send({ type: 'request', id: 'g1', kind: 'get', options: { ...GET, rpId: 'example.com' } });
+  assert.equal(bg.card().state, 'busy');
+  assert.equal(env.calls.popup, 0);
+  env.sandbox.Agent.Fa(page());                                                // an ordinary fill on tab 5
+  assert.deepEqual(env.calls.collected.at(-1).pageDetails[0].fields.map((f) => f.opid), ['__0']);
+  env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [{ action: 'fill', values: ['__0', 'typed'] }] }] });
+  assert.deepEqual(env.calls.executed.at(-1).scripts[0].script, [{ action: 'fill', values: ['__0', 'typed'] }]);
+  env.chrome.tabs.onActivated.fns[0]({ tabId: 6, windowId: 1 });
+  await ticks(10);
+  assert.equal(bg.card().state, 'waiting');
+  assert.equal(env.calls.popup, 1);
+  noErrors(env);
+});

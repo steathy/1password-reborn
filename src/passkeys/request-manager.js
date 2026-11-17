@@ -235,17 +235,20 @@
       card(rec, 'get-prompt', { site: rec.rpId }); // miss or partial index: ask first
     }
     function getOpenPopup(rec) {
-      if (owner && owner !== rec) { rec.stage = 'busy'; return card(rec, 'busy'); }
+      if ((owner && owner !== rec) || !isActiveTab(rec)) { rec.stage = 'busy'; return card(rec, 'busy'); }
       if (!isConnected()) { rec.stage = 'prompt'; return card(rec, 'not-connected'); }   // the app went away after intake
       owner = rec;
       rec.stage = 'waiting';
       card(rec, 'waiting');
       showPopup(rec.url);
     }
-    function ownerIsActive() {
+    // Only the active tab of the focused window may use the popup. A request from any other tab
+    // waits as busy (no popup) and promote() opens it once its tab is the active one.
+    function isActiveTab(rec) {
       const a = getActive();
-      return Boolean(a && owner && a.tabId === owner.tabId && a.windowId === owner.windowId);
+      return Boolean(a && a.tabId === rec.tabId && a.windowId === rec.windowId);
     }
+    function ownerIsActive() { return Boolean(owner && isActiveTab(owner)); }
     // Runs when the slot frees AND on every activation/focus event while it is free.
     function promote() {
       if (owner) return;
