@@ -11,15 +11,16 @@
 
   It asks for the edition first, and marks which ones fit the 1Password app it finds (1Password 4;
   1Password 7 up to 7.9.834, the last release that serves the classic extension):
-    [1] Reborn               1Password 4 and 7; one item per passkey
-    [2] 1Password 7 edition  password and passkey in one login
-    [3] Plain edition        fewest clicks, for experienced users (it warns first)
+    [1] Reborn                     1Password 4 and 7; one item per passkey
+    [2] 1Password 7 edition        password and passkey in one login
+    [3] 1Password 7 Plain edition  fewest clicks, for experienced users (it warns first)
   Then that edition's menu:
     [1] Load unpacked  - no admin; stages files and you click 'Load unpacked' once
     [2] Force install  - Reborn only: policy install; no dev-mode nag (needs admin, managed devices)
     [3] Uninstall      - remove the force-install policy
     [4] Firefox        - opens the edition's Firefox build
     [9] Other editions
+  The numbered menus answer on one key (no Enter); questions and the plain edition's "yes" take Enter.
 
   Each edition comes from its latest release (its release tag on GitHub; built-in tags when
   GitHub's release list cannot be read) and is staged in %LOCALAPPDATA%\1Password-Reborn.
@@ -73,7 +74,7 @@ $Editions = [ordered]@{
   '1p7'   = @{ Key = '1p7';   Name = '1Password 7 edition'; Branch = '1pass7';       Pattern = '^v\d+\.\d+\.\d+-1p7$';   Fallback = 'v1.8.0-1p7';
                About = 'password and passkey in one login'; Force = $false; Xpi = 'dist\firefox\1password-reborn-firefox-1p7.xpi'
                Files = @('src\manifest.json', 'dist\firefox\1password-reborn-firefox-1p7.xpi') }
-  'plain' = @{ Key = 'plain'; Name = 'Plain edition';       Branch = '1pass7-plain'; Pattern = '^v\d+\.\d+\.\d+-plain$'; Fallback = 'v1.7.0-plain';
+  'plain' = @{ Key = 'plain'; Name = '1Password 7 Plain edition'; Branch = '1pass7-plain'; Pattern = '^v\d+\.\d+\.\d+-plain$'; Fallback = 'v1.7.0-plain';
                About = 'fewest clicks, for experienced users'; Force = $false; Xpi = 'dist\firefox\1password-reborn-firefox-plain.xpi'
                Files = @('src\manifest.json', 'dist\firefox\1password-reborn-firefox-plain.xpi') }
 }
@@ -552,6 +553,14 @@ function Split-Lines([string]$Text, [int]$Width = 58) {
   if ($line) { $lines += $line }
   return ,$lines
 }
+function ConvertFrom-MenuKey([char]$Char, [int]$VirtualKeyCode) {
+  # One key pressed in a numbered menu -> its answer: '' for Enter (the marked edition), the
+  # character in lower case for a printable key, $null for a key that answers nothing (Shift,
+  # arrows, Esc, Space). Pure.
+  if ($VirtualKeyCode -eq 13) { return '' }
+  if ([int]$Char -eq 0 -or [char]::IsControl($Char) -or [char]::IsWhiteSpace($Char)) { return $null }
+  return ([string]$Char).ToLower()
+}
 
 function Install-Force($payload) {
   $extId = (Get-Content (Join-Path $payload 'dist\extension.json') -Raw | ConvertFrom-Json).id
@@ -627,7 +636,7 @@ function Install-Unpacked($payload) {
   Write-Host ''
   foreach ($b in $browsers) { Write-MidSeg @( @{T = "[$($b.Key)] "; C = 'Green' }, @{T = $b.Name; C = 'White' } ) }
   Write-Host ''
-  $sel = (Read-Host ((' ' * (Get-Margin)) + 'Choose your browser')).Trim()
+  $sel = (Read-MenuKey ((' ' * (Get-Margin)) + 'Choose your browser')).Trim()
   $browser = $browsers | Where-Object { $_.Key -eq $sel } | Select-Object -First 1
   if (-not $browser) { $browser = $browsers[-1] }   # anything else -> Other
 
@@ -843,7 +852,7 @@ function Install-Firefox($payload, [string]$EditionKey = 'main') {
     Write-MidSeg @( @{T = '[4] '; C = 'Green' }, @{T = '1Password 4 - signed build, any Firefox'; C = 'White' } )
     Write-MidSeg @( @{T = '[7] '; C = 'Green' }, @{T = '1Password 7 - unsigned build, Dev Edition/Nightly/ESR'; C = 'White' } )
     Write-Host ''
-    $a = (Read-Host ((' ' * (Get-Margin)) + 'Choose')).Trim()
+    $a = (Read-MenuKey ((' ' * (Get-Margin)) + 'Choose')).Trim()
     $plan = Resolve-FirefoxPlan -Firefoxes $ffs -HasOP4 $op4 -OP7Version $op7 -AppChoice $a
     if ($plan.Action -eq 'ask-app') { Write-Mid 'No choice made. Nothing was opened.' 'Gray'; return }
   }
@@ -897,6 +906,31 @@ function Write-TitleBar {
   Write-Mid $bar 'Cyan'
   Write-Host ''
 }
+function Test-KeyInput {
+  # Whether this console can read single keys (not with redirected input or without a console).
+  try { return ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsInputRedirected) } catch { return $false }
+}
+function Read-MenuKey($Prompt) {
+  # A numbered menu's answer from one key, without Enter (Enter itself answers '': the marked
+  # edition). An Enter typed out of habit right after the key is swallowed, so it does not answer
+  # the next screen. Where the console cannot read single keys: typed + Enter (Read-Host).
+  if (-not (Test-KeyInput)) { return (Read-Host $Prompt) }
+  Write-Host ([string]$Prompt + ': ') -NoNewline
+  try {
+    $Host.UI.RawUI.FlushInputBuffer()
+    do {
+      $k = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+      $a = ConvertFrom-MenuKey $k.Character $k.VirtualKeyCode
+    } while ($null -eq $a)
+    Write-Host $a
+    Start-Sleep -Milliseconds 300
+    $Host.UI.RawUI.FlushInputBuffer()
+    return $a
+  } catch {
+    Write-Host ''
+    return (Read-Host $Prompt)
+  }
+}
 function Write-MenuRows($rows) {
   $labelW = 15; $first = $true
   foreach ($r in $rows) {
@@ -919,10 +953,11 @@ function Show-EditionMenu {
   Write-Host ''
   Write-Mid 'Which edition?' 'White'
   Write-Host ''
+  $nameW = 2 + ($Rows | ForEach-Object { $_.Label.Length } | Measure-Object -Maximum).Maximum   # the longest name, two spaces
   foreach ($r in $Rows) {
     Write-Host (' ' * (Get-Margin)) -NoNewline
     Write-Host $r.Key -ForegroundColor $(if ($r.Marked) { 'Cyan' } else { 'Green' }) -NoNewline
-    Write-Host (' ' + $r.Label.PadRight(21) + $r.Version.PadRight(13)) -ForegroundColor White -NoNewline
+    Write-Host (' ' + $r.Label.PadRight($nameW) + $r.Version.PadRight(13)) -ForegroundColor White -NoNewline
     Write-Host $r.Fit -ForegroundColor $(if ($r.Fit -eq 'fits') { 'Green' } else { 'Yellow' })
     Write-Mid ('    ' + $r.About) 'Gray'
     Write-Host ''
@@ -932,13 +967,13 @@ function Show-EditionMenu {
   $prompt = 'Choose'
   $marked = @($Rows | Where-Object { $_.Marked })
   if ($marked.Count) { $prompt = 'Choose (Enter = ' + $marked[0].Key + ')' }
-  return (Read-Host ((' ' * (Get-Margin)) + $prompt))
+  return (Read-MenuKey ((' ' * (Get-Margin)) + $prompt))
 }
 function Show-PlainWarning {
   # The plain edition's warning. $true only when the user typed yes.
   Clear-Host
   Write-Host ''
-  Write-Mid 'Plain edition - for experienced users only' 'Yellow'
+  Write-Mid ($Editions['plain'].Name + ' - for experienced users only') 'Yellow'
   Write-Host ''
   foreach ($l in $PlainWarning) { Write-Mid $l 'White' }
   Write-Host ''
@@ -979,7 +1014,7 @@ function Show-ModeMenu([string]$EditionKey, $Payload) {
     Write-MenuRows (Get-ModeRows $EditionKey)
     Write-Host ''
     Show-OldInstallNotice $Payload
-    $choice = Resolve-ModeChoice -Answer (Read-Host ((' ' * (Get-Margin)) + 'Choose')) -EditionKey $EditionKey
+    $choice = Resolve-ModeChoice -Answer (Read-MenuKey ((' ' * (Get-Margin)) + 'Choose')) -EditionKey $EditionKey
     if ($choice -eq 'back' -or $choice -eq 'quit') { return $choice }
     if (-not $choice) { continue }
     try {

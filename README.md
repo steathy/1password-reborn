@@ -59,9 +59,9 @@ It asks which edition to install, and marks the ones that fit the 1Password app 
 your PC:
 
 ```
-[1] Reborn               1Password 4 and 7; one item per passkey
-[2] 1Password 7 edition  password and passkey in one login
-[3] Plain edition        fewest clicks, for experienced users
+[1] Reborn                     1Password 4 and 7; one item per passkey
+[2] 1Password 7 edition        password and passkey in one login
+[3] 1Password 7 Plain edition  fewest clicks, for experienced users
 ```
 
 - **Reborn** (this branch) works with 1Password 4 and 1Password 7 and keeps each passkey in an

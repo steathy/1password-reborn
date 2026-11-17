@@ -123,6 +123,8 @@ describe('install.ps1: the app gate, the answers and the menus', { skip: SKIP },
       /* 51 */ { fn: 'split', text: 'aaa bbb ccc', width: 7 },
       /* 52 */ { fn: 'split', text: 'a verylongwordindeed b', width: 6 },
       /* 53 */ { fn: 'split', text: '', width: 10 },
+      /* 54 */ ...[[50, 50], [81, 81], [13, 13], [0, 16], [27, 27], [32, 32]].map(([char, vk]) => ({ fn: 'menu-key-char', char, vk })),
+      /* 60 */ { fn: 'menu-key', prompt: 'Choose', answers: ['2'] },
     ]);
   });
 
@@ -167,7 +169,7 @@ describe('install.ps1: the app gate, the answers and the menus', { skip: SKIP },
     assert.deepEqual(R[49], [
       { Key: '[1]', Edition: 'main', Label: 'Reborn', Version: '1.5.0', About: '1Password 4 and 7; one item per passkey', Fit: 'fits', Marked: false },
       { Key: '[2]', Edition: '1p7', Label: '1Password 7 edition', Version: '1.8.0-1p7', About: 'password and passkey in one login', Fit: 'fits', Marked: true },
-      { Key: '[3]', Edition: 'plain', Label: 'Plain edition', Version: '1.7.0-plain', About: 'fewest clicks, for experienced users', Fit: 'fits', Marked: false },
+      { Key: '[3]', Edition: 'plain', Label: '1Password 7 Plain edition', Version: '1.7.0-plain', About: 'fewest clicks, for experienced users', Fit: 'fits', Marked: false },
     ]);
     assert.deepEqual(R[50].map((r) => [r.Fit, r.Marked]), [['fits', false], ['does not fit', false], ['does not fit', false]]);
   });
@@ -175,6 +177,10 @@ describe('install.ps1: the app gate, the answers and the menus', { skip: SKIP },
     assert.deepEqual(R[51], ['aaa bbb', 'ccc']);
     assert.deepEqual(R[52], ['a', 'verylongwordindeed', 'b']);
     assert.deepEqual(R[53], []);
+  });
+  it('a numbered menu answers on one key: its character, Enter (the marked edition), other keys ignored; typing + Enter where single keys cannot be read', () => {
+    assert.deepEqual(R.slice(54, 60).map((r) => r.Key), ['2', 'q', '', null, null, null]);   // 2, Q, Enter; Shift, Esc, Space ignored
+    assert.deepEqual([R[60].Answer, R[60].Prompts, R[60].KeyPrompts], ['2', ['Choose'], []]);  // the harness's input is redirected
   });
 });
 
@@ -211,6 +217,8 @@ describe('install.ps1: Firefox for each edition', { skip: SKIP }, () => {
                 channels: { [ffPrefs(DIR_DEVED)]: 'aurora' }, versions: {}, answers: ['n'] },
       /* 11 */ { fn: 'install', edition: 'plain', payload: PAYLOAD_DIR, paths: [ffExe(DIR_DEVED), ffPrefs(DIR_DEVED)],
                 channels: { [ffPrefs(DIR_DEVED)]: 'aurora' }, versions: { [OP7_KEY]: '7.9.834' }, answers: [''] },
+      /* 12 */ { fn: 'install', edition: 'main', payload: PAYLOAD_DIR, paths: [ffExe(DIR_DEVED), ffPrefs(DIR_DEVED), 'HKCU:\\Software\\AgileBits\\1Password 4', PAYLOAD_DIR + '\\' + XPI_1P7],
+                channels: { [ffPrefs(DIR_DEVED)]: 'aurora' }, versions: { [OP7_KEY]: '7.4.767' }, answers: ['7', ''] },
     ]);
   });
 
@@ -235,6 +243,11 @@ describe('install.ps1: Firefox for each edition', { skip: SKIP }, () => {
     assert.deepEqual(R[11].Started, []);
     assert.match(R[11].Error, /Missing .*1password-reborn-firefox-plain\.xpi/);
   });
+  it('with both apps, the question 1Password 4 or 7 answers on one key', () => {
+    assert.equal(R[12].Error, null);
+    assert.deepEqual(R[12].Started, [{ exe: ffExe(DIR_DEVED), args: '"' + PAYLOAD_DIR + '\\' + XPI_1P7 + '"' }]);
+    assert.deepEqual([R[12].KeyPrompts.map((p) => p.trim()), R[12].Prompts.map((p) => p.trim())], [['Choose'], ['Press Enter when that is done']]);
+  });
 });
 
 const TAGS = { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' };
@@ -243,7 +256,8 @@ const MARKER = INSTALL + '\\.release';
 const confirm = (edition, hasOP4, op7, answers) => ({ fn: 'confirm', edition, hasOP4, op7, answers });
 const flow = (edition, extra = {}) => ({ fn: 'payload-flow', edition, tags: TAGS, lookupOk: true, installDir: INSTALL, payloadRoot: '', paths: [], files: {}, ...extra });
 const staged = (marker, edition) => ({ paths: [MARKER, ...under(INSTALL, FILES[edition])], files: { [MARKER]: marker } });
-const trimmed = (r) => r.Prompts.map((p) => p.trim());
+const trimmed = (r) => r.Prompts.map((p) => p.trim());                       // answers typed + Enter (Read-Host)
+const keys = (r) => r.KeyPrompts.map((p) => p.trim());                       // answers on one key (Read-MenuKey)
 const flat = (s) => s.replace(/\s+/g, ' ');                                   // the installer wraps long texts
 
 describe('install.ps1: the screens and the flow of the one installer', { skip: SKIP }, () => {
@@ -259,7 +273,7 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
       /* 6 */ confirm('plain', true, null, ['y', 'yes']),
       /* 7 */ confirm('plain', true, null, ['']),
       /* 8 */ confirm('main', false, '7.9.836', ['']),
-      /* 9 */ { fn: 'edition-menu', tags: TAGS, hasOP4: false, op7: '7.9.834', mark: '1p7', stagedLine: 'installed: Plain edition 1.7.0-plain', lookupOk: true, answers: [''] },
+      /* 9 */ { fn: 'edition-menu', tags: TAGS, hasOP4: false, op7: '7.9.834', mark: '1p7', stagedLine: 'installed: 1Password 7 Plain edition 1.7.0-plain', lookupOk: true, answers: [''] },
       /* 10 */ { fn: 'edition-menu', tags: TAGS, hasOP4: false, op7: '7.9.836', mark: '', stagedLine: '', lookupOk: false, answers: ['0'] },
       /* 11 */ { fn: 'mode-menu', edition: '1p7', payload: 'C:\\op4-test-payload', answers: ['2', '5', '9'] },
       /* 12 */ { fn: 'mode-menu', edition: 'main', payload: 'C:\\op4-test-payload', answers: ['3', '', '0'] },
@@ -274,6 +288,7 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
       /* 21 */ { fn: 'init', ok: true, releases: [rel('v1.5.0'), rel('v1.8.0-1p7')] },
       /* 22 */ { fn: 'init', ok: false },
       /* 23 */ { fn: 'warning-lines' },
+      /* 24 */ { fn: 'unpacked', payload: 'C:\\op4-test-payload', paths: ['C:\\op4-test-payload\\src'], answers: ['6', '', '', ''] },
     ]);
   });
 
@@ -289,12 +304,13 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
   });
   it('the plain edition shows its warning every time and goes on only for yes, after the app gate', () => {
     assert.equal(R[3].Ok, true);
-    assert.match(R[3].Output, /Plain edition - for experienced users only/);
+    assert.match(R[3].Output, /1Password 7 Plain edition - for experienced users only/);
     assert.match(R[3].Output, /If in doubt, choose the 1Password 7 edition/);
     assert.deepEqual(trimmed(R[3]), ['Type yes to install the plain edition (anything else goes back)']);
     assert.deepEqual([R[4].Ok, R[5].Ok], [false, false]);
     assert.equal(R[6].Ok, true);
     assert.deepEqual(trimmed(R[6]), ['Continue anyway? [y/N]', 'Type yes to install the plain edition (anything else goes back)']);
+    assert.deepEqual(keys(R[6]), []);                                          // the gate and the warning stay typed + Enter
     assert.equal(R[7].Ok, false);
     assert.doesNotMatch(R[7].Output, /experienced users/);                 // no warning after a no at the gate
   });
@@ -303,17 +319,23 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
     for (const l of R[23]) assert.ok(l.length <= 62, l);
   });
   it('the edition menu shows the app, the staged edition, notes, the rows and the Enter default', () => {
-    for (const s of ['found: 1Password 7.9.834', 'installed: Plain edition 1.7.0-plain', 'Which edition?', '1Password 7 edition',
+    for (const s of ['found: 1Password 7.9.834', 'installed: 1Password 7 Plain edition 1.7.0-plain', 'Which edition?', '1Password 7 edition',
       '1.8.0-1p7', 'password and passkey in one login', 'fits', 'Quit']) assert.ok(R[9].Output.includes(s), s);
-    assert.deepEqual([R[9].Answer, trimmed(R[9])], ['', ['Choose (Enter = [2])']]);
+    assert.deepEqual([R[9].Answer, keys(R[9]), trimmed(R[9])], ['', ['Choose (Enter = [2])'], []]);
     assert.match(R[10].Output, /Couldn't read GitHub's releases/);
     assert.match(flat(R[10].Output), /7\.9\.834 is the last release/);
     assert.match(R[10].Output, /does not fit/);
-    assert.deepEqual(trimmed(R[10]), ['Choose']);
+    assert.deepEqual([keys(R[10]), trimmed(R[10])], [['Choose'], []]);
+  });
+  it("the edition menu's names, releases and fits stand in aligned columns", () => {
+    for (const s of [' Reborn' + ' '.repeat(21) + '1.5.0' + ' '.repeat(8), ' 1Password 7 edition' + ' '.repeat(8) + '1.8.0-1p7' + ' '.repeat(4),
+      ' 1Password 7 Plain edition' + ' '.repeat(2) + '1.7.0-plain' + ' '.repeat(2)]) assert.ok(R[9].Output.split('\n').includes(s), JSON.stringify(s));
   });
   it("an edition's menu: no Force install outside Reborn, Uninstall restarts with admin rights without a download, 9 and 0 leave", () => {
     assert.deepEqual([R[11].Result, R[11].Started], ['back', []]);
+    assert.deepEqual([keys(R[11]), trimmed(R[11])], [['Choose', 'Choose', 'Choose'], []]);
     assert.equal(R[12].Result, 'quit');
+    assert.deepEqual([keys(R[12]), trimmed(R[12])], [['Choose', 'Choose'], ['Press Enter to return to the menu']]);
     assert.equal(R[12].Started.length, 1);
     assert.match(R[12].Started[0].args, /-File ".+install\.ps1" -Mode uninstall$/);
     assert.match(R[12].Output, /Requesting administrator rights/);
@@ -327,7 +349,7 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
     assert.deepEqual(R[15].Saved, ['1p7 v1.8.0-1p7']);
     assert.doesNotMatch(R[15].Output, /Edition changed/);
     assert.deepEqual(R[16].Saved, ['1p7 v1.8.0-1p7']);
-    assert.match(flat(R[16].Output), /Edition changed: Plain edition -> 1Password 7 edition/);
+    assert.match(flat(R[16].Output), /Edition changed: 1Password 7 Plain edition -> 1Password 7 edition/);
     assert.deepEqual([R[17].Payload, R[17].Saved], [INSTALL, []]);
     assert.match(R[17].Output, /Couldn't read GitHub's releases - using the cached download \(v1\.6\.0-1p7\)\./);
     assert.deepEqual(R[18].Saved, ['1p7 v1.8.0-1p7']);
@@ -341,5 +363,12 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
   it('one look at the release list per run sets the tags and whether the list could be read', () => {
     assert.deepEqual(R[21], { LookupOk: true, Tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' } });
     assert.deepEqual(R[22], { LookupOk: false, Tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' } });
+  });
+  it("Load unpacked's browser choice answers on one key; its steps stay Enter", () => {
+    assert.equal(R[24].Error, null);
+    assert.deepEqual(keys(R[24]), ['Choose your browser']);
+    assert.deepEqual(trimmed(R[24]), ['Press Enter (or y) when the page is open', 'Press Enter (or y) when Developer mode is on',
+      'Press Enter (or y) when the extension has loaded']);
+    assert.match(R[24].Output, /Open the extensions page in Other/);
   });
 });
