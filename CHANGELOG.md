@@ -16,6 +16,9 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
 - The numbered menus answer on a single key (no Enter). Each edition's download is kept with its
   SHA-256 in `%LOCALAPPDATA%\1Password-Reborn\.downloads`, so going back to an edition unpacks it
   instead of downloading it again (also when GitHub's releases cannot be read).
+- The edition's menu calls option 3 **Undo force install**: it removes Reborn's Chrome
+  force-install policy and nothing else (not a Load unpacked extension, the Firefox build or
+  the files).
 - README: the one-line command is the short link `https://tinyurl.com/1password-reborn` (to main's
   `install.ps1`); the full GitHub address stays as the backup.
 
