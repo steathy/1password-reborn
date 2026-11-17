@@ -71,13 +71,13 @@ $script:PayloadNotes = @()   # the lines of the last download step, for the edit
 # edition's releases; Fallback: the tag used when GitHub's release list cannot be read; Files: what
 # a download of the edition must hold; Xpi: the unsigned Firefox build of an edition for 1Password 7.
 $Editions = [ordered]@{
-  'main'  = @{ Key = 'main';  Name = 'Reborn';              Branch = 'main';         Pattern = '^v\d+\.\d+\.\d+$';       Fallback = 'v1.5.0';
+  'main'  = @{ Key = 'main';  Name = 'Reborn';              Branch = 'main';         Pattern = '^v\d+\.\d+\.\d+$';       Fallback = 'v1.8.0';
                About = '1Password 4 and 7; one item per passkey'; Force = $true
                Files = @('src\manifest.json', 'dist\1password-reborn.crx', 'dist\extension.json', $FirefoxXpiSigned, $FirefoxXpiUnsigned) }
   '1p7'   = @{ Key = '1p7';   Name = '1Password 7 edition'; Branch = '1pass7';       Pattern = '^v\d+\.\d+\.\d+-1p7$';   Fallback = 'v1.8.0-1p7';
                About = 'password and passkey in one login'; Force = $false; Xpi = 'dist\firefox\1password-reborn-firefox-1p7.xpi'
                Files = @('src\manifest.json', 'dist\firefox\1password-reborn-firefox-1p7.xpi') }
-  'plain' = @{ Key = 'plain'; Name = '1Password 7 Plain edition'; Branch = '1pass7-plain'; Pattern = '^v\d+\.\d+\.\d+-plain$'; Fallback = 'v1.7.0-plain';
+  'plain' = @{ Key = 'plain'; Name = '1Password 7 Plain edition'; Branch = '1pass7-plain'; Pattern = '^v\d+\.\d+\.\d+-plain$'; Fallback = 'v1.8.0-plain';
                About = 'fewest clicks, for experienced users'; Force = $false; Xpi = 'dist\firefox\1password-reborn-firefox-plain.xpi'
                Files = @('src\manifest.json', 'dist\firefox\1password-reborn-firefox-plain.xpi') }
 }

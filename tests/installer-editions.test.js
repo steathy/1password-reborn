@@ -76,8 +76,8 @@ describe('install.ps1: the release of each edition and where its files come from
   });
   it('without a matching release, or when the list cannot be read, the built-in tags', () => {
     assert.deepEqual(R[1]['1p7'], { Tag: 'v1.8.0-1p7', Builtin: true });
-    assert.deepEqual(R[1].plain, { Tag: 'v1.7.0-plain', Builtin: true });
-    const builtin = { main: { Tag: 'v1.5.0', Builtin: true }, '1p7': { Tag: 'v1.8.0-1p7', Builtin: true }, plain: { Tag: 'v1.7.0-plain', Builtin: true } };
+    assert.deepEqual(R[1].plain, { Tag: 'v1.8.0-plain', Builtin: true });
+    const builtin = { main: { Tag: 'v1.8.0', Builtin: true }, '1p7': { Tag: 'v1.8.0-1p7', Builtin: true }, plain: { Tag: 'v1.8.0-plain', Builtin: true } };
     assert.deepEqual(R[2], builtin);
     assert.deepEqual(R[3], builtin);
   });
@@ -412,8 +412,8 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
     assert.match(R[20].Started[0].args, /-File ".+install\.ps1" -Mode force -Edition main -PayloadRoot "C:\\op4-test-payload"$/);
   });
   it('one look at the release list per run sets the tags and whether the list could be read', () => {
-    assert.deepEqual(R[21], { LookupOk: true, Tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' } });
-    assert.deepEqual(R[22], { LookupOk: false, Tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.7.0-plain' } });
+    assert.deepEqual(R[21], { LookupOk: true, Tags: { main: 'v1.5.0', '1p7': 'v1.8.0-1p7', plain: 'v1.8.0-plain' } });
+    assert.deepEqual(R[22], { LookupOk: false, Tags: { main: 'v1.8.0', '1p7': 'v1.8.0-1p7', plain: 'v1.8.0-plain' } });
   });
   it("Load unpacked's browser choice answers on one key; its steps stay Enter", () => {
     assert.equal(R[24].Error, null);

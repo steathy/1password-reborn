@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
-## [1.8.0] - unreleased
+## [1.8.0] - 2026-11-17
 
 Reborn for 1Password 4 and 7, one item per passkey. From this release on the three editions
 share one version number: Reborn 1.8.0, the 1Password 7 edition 1.8.0-1p7 and the plain edition

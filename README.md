@@ -469,7 +469,7 @@ Edition with 1Password 7.3.657 and 7.9.834.
 
 ## Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.5.0**.
+See [`CHANGELOG.md`](CHANGELOG.md). Current release: **1.8.0**.
 
 ## License
 
