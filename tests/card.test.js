@@ -11,14 +11,18 @@ function setup(opts = {}) {
   const doc = dom.window.document;
   let t = 1000;
   const calls = { approve: [], decline: [] };
+  // The countdown's interval is a fake: tick() runs what is scheduled, cleared handles are recorded.
+  const timers = { live: new Map(), next: 1, cleared: [] };
   const card = createCard(doc, {
     onApprove: (stage, extra) => calls.approve.push([stage, extra]),
     onDecline: (how) => calls.decline.push(how),
     now: () => t,
     armDelayMs: 500,
+    setInterval: (fn, ms) => { const h = timers.next++; timers.live.set(h, { fn, ms }); return h; },
+    clearInterval: (h) => { timers.cleared.push(h); timers.live.delete(h); },
     ...opts,
   });
-  return { dom, doc, card, calls, advance: (ms) => { t += ms; } };
+  return { dom, doc, card, calls, timers, advance: (ms) => { t += ms; }, tick: () => timers.live.forEach((x) => x.fn()) };
 }
 const buttons = (card) => Array.from(card._root.querySelectorAll('button')).map((b) => b.textContent);
 const button = (card, label) => Array.from(card._root.querySelectorAll('button')).find((b) => b.textContent === label);
@@ -330,4 +334,103 @@ test('every card sends what it sent before, in every style: each button its appr
       assert.deepEqual(t.calls.decline, sends.filter((s) => s.length === 2).map((s) => s[1]), label);
     }
   }
+});
+
+/* ---------- reborn ports: the countdown (design 1) ---------- */
+
+test('the countdown: the time in the top line and a bar that shrinks; both red from a third left; it stops with the card', () => {
+  const t = setup();
+  const cd = () => t.card._root.querySelector('.brand .cd');
+  const bar = () => t.card._root.querySelector('.box > .bar');
+  const now = () => [cd().textContent, cd().className, bar().style.width, bar().style.backgroundColor];
+  const clock = { expires: 1000 + 120000, total: 120000 };                     // the fake clock stands at 1000
+  t.card.show('waiting', {}, { clock });
+  assert.deepEqual(now(), ['2:00', 'cd', '100%', 'rgb(10, 102, 194)']);
+  assert.deepEqual([...t.timers.live.values()].map((x) => x.ms), [250]);
+  assert.equal(t.card._root.querySelector('.brand').firstChild.textContent, '1Password passkeys');
+  assert.equal(t.card._root.querySelector('.brand').lastChild, cd());          // the time stands at the end of the top line
+  assert.equal(t.card._root.querySelector('.box').lastChild, bar());
+  t.advance(400); t.tick();
+  assert.equal(cd().textContent, '2:00');                                       // whole seconds, rounded up: 0:00 only at the end
+  t.advance(600); t.tick();
+  assert.equal(cd().textContent, '1:59');
+  t.advance(59000); t.tick();                                                   // half the time left
+  assert.deepEqual(now(), ['1:00', 'cd', '50%', 'rgb(10, 102, 194)']);
+  t.advance(14400); t.tick();                                                   // 38 % left: still the style's colour
+  assert.deepEqual(now(), ['0:46', 'cd', '38%', 'rgb(10, 102, 194)']);
+  t.advance(2600); t.tick();                                                    // between 38 % and a third: turning
+  assert.equal(cd().className, 'cd');
+  assert.notEqual(bar().style.backgroundColor, 'rgb(10, 102, 194)');
+  assert.notEqual(bar().style.backgroundColor, 'rgb(198, 40, 40)');
+  t.advance(3000); t.tick();                                                    // exactly a third left
+  assert.deepEqual(now(), ['0:40', 'cd late', '33.3%', 'rgb(198, 40, 40)']);
+  t.advance(20000); t.tick();
+  assert.deepEqual(now(), ['0:20', 'cd late', '16.7%', 'rgb(164, 28, 28)']);
+  t.advance(20000); t.tick();
+  assert.deepEqual(now(), ['0:00', 'cd late', '0%', 'rgb(130, 16, 16)']);
+  t.advance(5000); t.tick();                                                    // past the deadline: it stays at zero
+  assert.deepEqual(now(), ['0:00', 'cd late', '0%', 'rgb(130, 16, 16)']);
+  // the next card of the request goes on from the same clock; the old interval is stopped
+  const first = [...t.timers.live.keys()];
+  t.card.show('notice', { text: 'That item has no passkey. Pick another.' }, { clock: { expires: 1e12, total: 60000 } });
+  assert.deepEqual(t.timers.cleared, first);
+  assert.equal(t.timers.live.size, 1);
+  assert.deepEqual(now(), ['1:00', 'cd', '100%', 'rgb(10, 102, 194)']);       // more time left than the whole: a full bar, the whole time
+  t.card.hide();
+  assert.equal(t.timers.live.size, 0);
+  // the longest request this branch has: ten minutes (no 120-second cap here)
+  const long = setup();
+  long.card.show('waiting', {}, { clock: { expires: 1000 + 600000, total: 600000 } });
+  const at = () => { const c = long.card._root.querySelector('.cd'); return [c.textContent, c.className, long.card._root.querySelector('.bar').style.width]; };
+  assert.deepEqual(at(), ['10:00', 'cd', '100%']);
+  long.advance(1000); long.tick();
+  assert.deepEqual(at(), ['9:59', 'cd', '99.8%']);
+  long.advance(399000); long.tick();                                            // a third of ten minutes left
+  assert.deepEqual(at(), ['3:20', 'cd late', '33.3%']);
+  // no clock, or a clock that makes no sense: no countdown at all
+  for (const frame of [undefined, {}, { clock: null }, { clock: { expires: NaN, total: 60000 } }, { clock: { expires: 5000, total: 0 } }, { clock: { expires: 5000 } }]) {
+    t.card.show('waiting', {}, frame);
+    assert.equal(cd(), null, JSON.stringify(frame));
+    assert.equal(bar(), null, JSON.stringify(frame));
+    assert.equal(t.timers.live.size, 0, JSON.stringify(frame));
+    assert.equal(t.card._root.querySelector('.brand').textContent, '1Password passkeys');
+  }
+});
+
+test('the countdown paints the time and the bar only: a title being edited and a typed item title are not disturbed', () => {
+  // the saving card: the proposed title is being edited while the clock runs
+  const { dom, card, calls, advance, tick } = setup({ isTrusted: () => true });
+  card.show('create-saving', { app7: true, title: T }, { clock: { expires: 1000 + 120000, total: 120000 } });
+  const cd = () => card._root.querySelector('.brand .cd');
+  const box = card._root.querySelector('.box');
+  const pt = card._root.querySelector('.ptitle');
+  const t = card._root.querySelector('.t');
+  card._root.querySelector('.edit').click();
+  t.textContent = 'half typed';
+  advance(90000); tick();                                                      // 30 s left: the time is red by now
+  assert.deepEqual([cd().textContent, cd().className], ['0:30', 'cd late']);
+  assert.equal(card._root.querySelector('.box'), box);                         // the same card, not a new rendering
+  assert.equal(card._root.querySelector('.t'), t);
+  assert.equal(t.textContent, 'half typed');
+  assert.equal(t.getAttribute('contenteditable'), 'plaintext-only');
+  assert.ok(pt.classList.contains('editing'));
+  assert.ok(rowButtons(card).every((b) => b.disabled));                        // Done and Cancel still wait for the edit to end
+  advance(1000); tick();
+  key(dom, t, 'Enter');
+  assert.equal(t.textContent, 'half typed');                                   // the edit is kept
+  assert.ok(rowButtons(card).every((b) => !b.disabled));
+  assert.equal(cd().textContent, '0:29');
+  button(card, 'Done').click();
+  assert.deepEqual(calls.approve, [['saving', {}]]);
+  // the first save card: what was typed into the title box survives the ticks and is what Save sends
+  const s = setup({ isTrusted: () => true });
+  s.card.show('create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: T }, { clock: { expires: 1000 + 60000, total: 60000 } });
+  const input = s.card._root.querySelector('input');
+  input.value = 'Work GitHub';
+  s.advance(30000); s.tick();
+  assert.equal(s.card._root.querySelector('input'), input);
+  assert.equal(input.value, 'Work GitHub');
+  assert.equal(s.card._root.querySelector('.brand .cd').textContent, '0:30');
+  button(s.card, 'Save in 1Password').click();
+  assert.deepEqual(s.calls.approve, [['prompt', { title: 'Work GitHub' }]]);
 });

@@ -126,3 +126,25 @@ test("the same id sent again while its request is live, through the bridge and t
   assert.equal(p.view().state, 'waiting');
   assert.equal(m.getState().owner.id, 'b');
 });
+
+test("the countdown runs from the worker's deadline and stops when the request ends: a reply, a page abort, a lost port", () => {
+  for (const ending of ['reply', 'abort', 'disconnect', 'none']) {
+    const p = page();
+    p.fromPage({ op4pk: 1, dir: 'req', id: 'r1', kind: 'get', options: {} });
+    p.fromWorker({ type: 'card', id: 'r1', card: { state: 'busy' } });       // no clock: no countdown
+    assert.deepEqual([p.view().state, p.view().time, p.view().bar, p.intervals.size], ['busy', null, null, 0], ending);
+    p.fromWorker({ type: 'card', id: 'r1', card: { state: 'get-prompt', site: 'example.com' }, clock: clock(), style: 'reborn' });
+    assert.deepEqual([p.view().state, p.view().time], ['get-prompt', '1:00'], ending);
+    assert.ok(p.view().bar > 99, ending);
+    assert.equal(p.intervals.size, 1, ending);
+    p.fromWorker({ type: 'card', id: 'r1', card: { state: 'waiting' }, clock: clock(), style: 'reborn' });
+    assert.deepEqual([p.view().state, p.view().time], ['waiting', '1:00'], ending);
+    assert.equal(p.intervals.size, 1, ending);                                // the earlier card's interval is gone
+    if (ending === 'reply') p.fromWorker({ type: 'reply', id: 'r1', error: { name: 'NotAllowedError', message: 'timed out' } });
+    if (ending === 'abort') p.fromPage({ op4pk: 1, dir: 'req', id: 'r1', cancel: true });
+    if (ending === 'disconnect') p.disconnect();
+    if (ending === 'none') p.fromWorker({ type: 'card', id: 'r1', card: { state: 'none' } });
+    assert.equal(p.view(), null, ending);                                     // the card is gone
+    assert.equal(p.intervals.size, 0, ending);
+  }
+});
