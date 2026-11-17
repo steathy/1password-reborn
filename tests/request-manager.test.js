@@ -33,15 +33,21 @@ function makePort(id, tab) {
 }
 
 function harness(opts = {}) {
-  const calls = { showPopup: [], autosave: [], recoveryPut: [], recoveryRemove: [], recoveryInFlight: 0 };
+  const calls = { showPopup: [], autosave: [], recoveryPut: [], recoveryRemove: [], recoveryInFlight: 0, signEnded: 0 };
   const timers = [];
   const indexData = opts.index || {};
   let active = opts.active || { tabId: 1, windowId: 10 };
   let connected = opts.connected !== false;
   // The recovery fakes are asynchronous like the chrome.storage adapter; a test can hold or fail the write.
   const gate = { hold: null, fail: null };
+  // opts.signGate: an assertion is signed only once this promise has settled, and fails if it
+  // rejected, so a test can act while the request is being signed. calls.signEnded counts the
+  // signings that are over. opts.makeGate: the same for making a passkey.
+  let authenticator = A;
+  if (opts.signGate) authenticator = Object.assign({}, authenticator, { getAssertion: async (...a) => { try { await opts.signGate; return await A.getAssertion(...a); } finally { calls.signEnded++; } } });
+  if (opts.makeGate) authenticator = Object.assign({}, authenticator, { makeCredential: async (...a) => { await opts.makeGate; return A.makeCredential(...a); } });
   const m = createManager({
-    authenticator: A,
+    authenticator,
     index: { get: (rp) => (indexData[rp] || []).slice(), add(rp, e) { (indexData[rp] = indexData[rp] || []).push(e); } },
     recovery: {
       async put(id, p) {
@@ -67,6 +73,7 @@ async function until(pred, label) {
   for (let i = 0; i < 400; i++) { if (pred()) return; await new Promise((r) => setTimeout(r, 5)); }
   throw new Error('timed out waiting for ' + label);
 }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('create: prompt, Save, autosave payload, Done, credential; never a popup owner', async () => {
   const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
@@ -530,5 +537,116 @@ test('create: the saving card carries the 1Password 7 note only with a native-me
     await until(() => p.state() === 'create-saving', 'saving card');
     assert.equal(p.last('card').card.app7, nativeApp ? true : undefined, String(nativeApp));
     assert.equal(p.last('card').card.title, nativeApp ? '[Passkey] Example - Alice' : undefined, String(nativeApp));
+  }
+});
+
+/* ---------- reborn ports: a request id sent again (design 6) ---------- */
+
+test('a request id sent again while its save or sign-in is in flight: the ended record sends nothing, saves nothing and never strands the popup', async () => {
+  // a save whose recovery copy is being stored when the page sends the same id again
+  for (const variant of ['abort first', 'supersede']) {
+    for (const ending of ['stored', 'store fails']) {
+      const label = variant + ', ' + ending;
+      const h = harness(); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+      let release; h.gate.hold = new Promise((r) => { release = r; });
+      p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });
+      p.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });       // Save in 1Password: the passkey is made and its copy stored
+      await until(() => h.calls.recoveryInFlight === 1, 'first save in flight: ' + label);
+      if (variant === 'abort first') p.emit({ type: 'cancel', id: 'c1' });
+      p.emit({ type: 'request', id: 'c1', kind: 'create', options: createOptions() });   // the page sends the same id again
+      assert.equal(p.state(), 'create-prompt', label);
+      assert.deepEqual(p.sent.filter((m) => m.type === 'reply'), [], label);   // no reply so far, also not for the save that was still live when the id came again
+      const sent = p.sent.length;
+      if (ending === 'store fails') h.gate.fail = new Error('QUOTA_BYTES quota exceeded');
+      release();
+      await until(() => h.calls.recoveryInFlight === 0, 'first write over: ' + label);
+      await wait(30);
+      assert.deepEqual(p.sent.slice(sent), [], label);                         // no reply and no card under the newer request's id
+      assert.equal(h.calls.autosave.length, 0, label);                         // the ended save is not sent to 1Password
+      assert.equal(h.calls.recoveryPut.length, ending === 'stored' ? 1 : 0, label);
+      assert.equal(h.calls.recoveryRemove.length, 0, label);                   // a copy that was stored stays, as before on this branch
+      assert.deepEqual(h.m.getState(), { owner: null, pending: [{ id: 'c1', kind: 'create', stage: 'prompt', tabId: 1 }] }, label);
+      h.gate.hold = null; h.gate.fail = null;
+      p.emit({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });       // the newer request still goes on to its end
+      await until(() => p.state() === 'create-saving', 'the newer save: ' + label);
+      p.emit({ type: 'approve', id: 'c1', stage: 'saving' });                  // Done
+      assert.ok(p.last('reply').credential, label);
+      assert.equal(p.sent.filter((m) => m.type === 'reply').length, 1, label);
+      assert.deepEqual(h.m.getState(), { owner: null, pending: [] }, label);
+    }
+  }
+  // a sign-in that is being signed when the page sends the same id again; the signing ends well or fails
+  const v = await vaultItem();
+  for (const outcome of ['signed', 'signing fails']) {
+    let settle;
+    const signGate = new Promise((ok, fail) => { settle = outcome === 'signed' ? ok : () => fail(new Error('key unusable')); });
+    const h = harness({ signGate, index: indexWith(v.made.credentialId) }); const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'X', kind: 'get', options: getOptions() });
+    h.m.handleFillItem({ item: v.copy() });
+    await until(() => p.state() === 'confirm', 'confirm: ' + outcome);
+    p.emit({ type: 'approve', id: 'X', stage: 'confirm' });                    // Sign in: the assertion is being signed
+    p.emit({ type: 'cancel', id: 'X' });
+    p.emit({ type: 'request', id: 'X', kind: 'get', options: getOptions() });  // the same id again: it owns the popup now
+    const sent = p.sent.length;
+    settle();
+    await until(() => h.calls.signEnded === 1, 'signing over: ' + outcome);
+    await wait(30);
+    assert.deepEqual(p.sent.slice(sent), [], outcome);
+    assert.deepEqual(h.m.getState().owner, { id: 'X', stage: 'waiting', tabId: 1, origin: ORIGIN }, outcome);
+    assert.deepEqual(h.m.getState().pending, [{ id: 'X', kind: 'get', stage: 'waiting', tabId: 1 }], outcome);
+    p.emit({ type: 'decline', id: 'X', how: 'cancel' });
+    assert.deepEqual(h.m.getState(), { owner: null, pending: [] }, outcome);
+  }
+});
+
+test('the same id sent again while its request is live takes its place: the earlier record gets no reply, the newer request can be used and ended; another id is answered superseded as before', async () => {
+  const told = (p) => p.sent.map((m) => (m.type === 'card' ? 'card ' + m.card.state : 'reply ' + (m.error ? m.error.message : m.fallback ? 'fallback' : 'credential')));
+  // a sign-in on a known site owns the popup when the page sends its id again
+  let h = harness({ index: indexWith(CRED) }); let p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'same', kind: 'get', options: getOptions() });
+  assert.equal(h.m.getState().owner.id, 'same');
+  p.emit({ type: 'request', id: 'same', kind: 'get', options: getOptions() });
+  assert.deepEqual(told(p), ['card waiting', 'card none', 'card waiting']);   // no reply under the id: the bridge would take it for the end of the newer request
+  assert.equal(h.timers[0].cleared, true);                                   // the earlier record is retired
+  assert.deepEqual(h.m.getState(), { owner: { id: 'same', stage: 'waiting', tabId: 1, origin: ORIGIN }, pending: [{ id: 'same', kind: 'get', stage: 'waiting', tabId: 1 }] });
+  assert.deepEqual(h.calls.showPopup, [PAGE, PAGE]);
+  p.emit({ type: 'cancel', id: 'same' });                                    // the page's cancel ends the newer request and frees the popup
+  assert.deepEqual(h.m.getState(), { owner: null, pending: [] });
+  assert.deepEqual(told(p), ['card waiting', 'card none', 'card waiting', 'card none']);
+  // the same for a save at its first card; the newer request goes on to its end
+  h = harness(); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'same', kind: 'create', options: createOptions() });
+  p.emit({ type: 'request', id: 'same', kind: 'create', options: createOptions() });
+  assert.deepEqual(told(p), ['card create-prompt', 'card none', 'card create-prompt']);
+  p.emit({ type: 'approve', id: 'same', stage: 'prompt', title: '' });
+  await until(() => p.state() === 'create-saving', 'saving card');
+  p.emit({ type: 'approve', id: 'same', stage: 'saving' });                  // Done
+  assert.ok(p.last('reply').credential);
+  assert.equal(p.sent.filter((m) => m.type === 'reply').length, 1);
+  // another id on the same port and tab: the earlier request is answered as before
+  h = harness({ index: indexWith(CRED) }); p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+  p.emit({ type: 'request', id: 'a', kind: 'get', options: getOptions() });
+  p.emit({ type: 'request', id: 'b', kind: 'get', options: getOptions() });
+  assert.deepEqual(told(p), ['card waiting', 'reply superseded by a newer request', 'card none', 'card waiting']);
+  assert.equal(h.m.getState().owner.id, 'b');
+});
+
+test('a request id sent again while its passkey is being made: the ended save stores no recovery copy and sends nothing', async () => {
+  for (const cancelFirst of [false, true]) {
+    const label = cancelFirst ? 'abort first' : 'supersede';
+    let release;
+    const h = harness({ makeGate: new Promise((r) => { release = r; }) });
+    const p = makePort(1, { id: 1, windowId: 10 }); h.m.onConnect(p);
+    p.emit({ type: 'request', id: 'X', kind: 'create', options: createOptions() });
+    p.emit({ type: 'approve', id: 'X', stage: 'prompt', title: '' });         // Save in 1Password: the passkey is being made
+    if (cancelFirst) p.emit({ type: 'cancel', id: 'X' });
+    p.emit({ type: 'request', id: 'X', kind: 'create', options: createOptions() });   // the same id again
+    const sent = p.sent.length;
+    release();
+    await wait(60);
+    assert.equal(h.calls.recoveryPut.length, 0, label);                       // no copy of a passkey that is never saved (no stray Re-save)
+    assert.equal(h.calls.autosave.length, 0, label);
+    assert.deepEqual(p.sent.slice(sent), [], label);                          // nothing goes to the page under the newer request's id
+    assert.deepEqual(h.m.getState(), { owner: null, pending: [{ id: 'X', kind: 'create', stage: 'prompt', tabId: 1 }] }, label);
   }
 });
