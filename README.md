@@ -51,15 +51,31 @@ original used — native messaging (`2bua8c4s2c.com.agilebits.1password`) and a
 Open **Windows PowerShell** and run:
 
 ```powershell
+irm https://tinyurl.com/1password-reborn | iex
+```
+
+It starts the installer for all three editions of Reborn; this edition is **[2]**. If the short
+link does not work, use the full address, which also marks this edition (Enter picks it):
+
+```powershell
 irm https://raw.githubusercontent.com/steathy/1password-reborn/1pass7/install.ps1 | iex
 ```
 
-It downloads this repo, then shows a menu:
+```
+[1] Reborn                     1Password 4 and 7; one item per passkey
+[2] 1Password 7 edition        password and passkey in one login
+[3] 1Password 7 Plain edition  fewest clicks, for experienced users
+```
+
+It marks the editions that fit the 1Password app it finds on your PC (1Password 7 up to
+**7.9.834**, the last release that serves the classic extension) and installs each one from its
+latest release on GitHub. Then the edition's menu:
 
 ```
 [1] Load unpacked   (recommended; works on any PC, no admin)
-[3] Uninstall       (remove a force-install policy left by the main version)
+[3] Uninstall       (remove the force-install policy)
 [4] Firefox         (unsigned build for 1Password 7)
+[9] Other editions
 ```
 
 - **Load unpacked** (recommended) stages the files under
@@ -77,13 +93,16 @@ It downloads this repo, then shows a menu:
 - **Firefox** opens the unsigned 1Password 7 build in Developer Edition, Nightly or ESR.
   See [Firefox](#firefox) below. Nothing is written to Firefox's profile.
 
-> `irm … | iex` runs remote code — review [`install.ps1`](install.ps1) first if you like.
+> `irm … | iex` runs remote code — review the installer first if you like: the short link and
+> this branch's [`install.ps1`](install.ps1) both run
+> [main's `install.ps1`](https://github.com/steathy/1password-reborn/blob/main/install.ps1).
 > The same script works from a local clone too: double-click **`install.bat`**.
 
 > **Keep the load-unpacked folder in place.** Load unpacked reads the extension
 > directly from its folder (`%LOCALAPPDATA%\1Password-Reborn\src` or your clone) on
 > **every** browser launch — move or delete it and the extension disappears. To
-> remove it, use the browser's extensions page → Remove, then delete the folder.
+> remove it, use the browser's extensions page → Remove, then delete the folder. Choosing
+> another edition replaces the files in that folder: reload the extension afterwards.
 
 ## Firefox
 
