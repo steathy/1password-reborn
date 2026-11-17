@@ -23,7 +23,9 @@
   The numbered menus answer on one key (no Enter); questions and the plain edition's "yes" take Enter.
 
   Each edition comes from its latest release (its release tag on GitHub; built-in tags when
-  GitHub's release list cannot be read) and is staged in %LOCALAPPDATA%\1Password-Reborn.
+  GitHub's release list cannot be read) and is staged in %LOCALAPPDATA%\1Password-Reborn. Each
+  download is kept there in .downloads (<tag>.zip with its SHA-256), so going back to an edition
+  unpacks its saved zip instead of downloading it again.
   Review this script before running it - irm|iex executes remote code.
 
   Tests: tests/firefox-installer.test.js and tests/installer-editions.test.js dot-source this file
@@ -263,40 +265,96 @@ function Get-StagedRelease {
   if ($p.Count -ne 2 -or -not $Editions.Contains($p[0])) { return $null }
   return @{ Edition = $p[0]; Tag = $p[1] }
 }
-function Save-Payload([string]$EditionKey, [string]$Tag) {
-  # Downloads the zip of the release tag, checks that it holds the edition (its files and its
-  # manifest), and only then replaces $InstallDir. A failure leaves $InstallDir as it was.
-  Write-Host ('Downloading ' + $Editions[$EditionKey].Name + ' ' + $Tag + '...')
-  $zip = Join-Path $env:TEMP 'op4-reborn.zip'
-  $ex  = Join-Path $env:TEMP 'op4-reborn_extract'
-  $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+function Get-DownloadsDir { return (Join-Path $InstallDir '.downloads') }
+function Expand-Payload([string]$EditionKey, [string]$Tag, [string]$Zip) {
+  # Unpacks a release zip, checks that it holds the edition (its files and its manifest), and only
+  # then replaces the staged files in $InstallDir; the saved downloads in .downloads stay. A failure
+  # leaves $InstallDir as it was.
+  $ex = Join-Path $env:TEMP 'op4-reborn_extract'
   try {
-    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/$Owner/$Repo/archive/refs/tags/$Tag.zip" -OutFile $zip
     if (Test-Path $ex) { Remove-Item -Recurse -Force $ex }
-    Expand-Archive -Path $zip -DestinationPath $ex -Force
+    Expand-Archive -Path $Zip -DestinationPath $ex -Force
     $inner = Get-ChildItem $ex -Directory | Select-Object -First 1
     if (-not $inner -or -not (Test-Payload $inner.FullName $EditionKey) -or (Get-LocalEdition $inner.FullName) -ne $EditionKey) {
       throw ('The download of ' + $Tag + ' does not hold the ' + $Editions[$EditionKey].Name + '.')
     }
-    if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
-    Move-Item -Path $inner.FullName -Destination $InstallDir
+    if (Test-Path $InstallDir) {
+      Get-ChildItem -Force $InstallDir | Where-Object { $_.Name -ne '.downloads' } | Remove-Item -Recurse -Force
+    } else { New-Item -ItemType Directory -Path $InstallDir | Out-Null }
+    Get-ChildItem -Force $inner.FullName | Move-Item -Destination $InstallDir
     Set-Content -Path (Join-Path $InstallDir '.release') -Value ($EditionKey + ' ' + $Tag) -Encoding ASCII
   } finally {
-    $ProgressPreference = $prev
-    Remove-Item -Force $zip -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $ex -ErrorAction SilentlyContinue
   }
   return $InstallDir
 }
+function Remove-SavedDownload([string]$Zip) {
+  Remove-Item -Force -LiteralPath $Zip, ($Zip + '.sha256') -ErrorAction SilentlyContinue
+}
+function Save-Download([string]$EditionKey, [string]$Tag, [string]$Zip) {
+  # Keeps a release zip in .downloads as <tag>.zip with its SHA-256 (<tag>.zip.sha256), and deletes
+  # the edition's other saved zips.
+  $dir = Get-DownloadsDir
+  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+  foreach ($f in @(Get-ChildItem -File -Path $dir -Filter '*.zip' | Where-Object { $_.Extension -eq '.zip' })) {
+    if ($f.BaseName -ne $Tag -and (Get-EditionOfTag $f.BaseName) -eq $EditionKey) { Remove-SavedDownload $f.FullName }
+  }
+  $dest = Join-Path $dir ($Tag + '.zip')
+  Move-Item -Force -Path $Zip -Destination $dest
+  Set-Content -Path ($dest + '.sha256') -Value (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash -Encoding ASCII
+}
+function Get-SavedDownload([string]$EditionKey) {
+  # The edition's saved zip in .downloads (its newest tag): @{ Tag; Zip }, or $null.
+  $dir = Get-DownloadsDir
+  if (-not (Test-Path $dir)) { return $null }
+  $fake = @(Get-ChildItem -File -Path $dir -Filter '*.zip' | Where-Object { $_.Extension -eq '.zip' } |
+            ForEach-Object { @{ tag_name = $_.BaseName; draft = $false; prerelease = $false } })
+  $t = (Select-ReleaseTags $fake)[$EditionKey]
+  if ($t.Builtin) { return $null }
+  return @{ Tag = $t.Tag; Zip = (Join-Path $dir ($t.Tag + '.zip')) }
+}
+function Test-SavedZip([string]$Zip) {
+  # True when the saved zip still has the SHA-256 recorded when it was downloaded.
+  $s = $Zip + '.sha256'
+  if (-not (Test-Path $Zip) -or -not (Test-Path $s)) { return $false }
+  try { return (([string](Get-Content $s -Raw)).Trim() -eq (Get-FileHash -Algorithm SHA256 -LiteralPath $Zip).Hash) } catch { return $false }
+}
+function Save-Payload([string]$EditionKey, [string]$Tag) {
+  # Downloads the zip of the release tag and stages it (Expand-Payload checks it first); the zip is
+  # then kept in .downloads. A failure leaves $InstallDir as it was.
+  Write-Host ('Downloading ' + $Editions[$EditionKey].Name + ' ' + $Tag + '...')
+  $zip = Join-Path $env:TEMP 'op4-reborn.zip'
+  $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+  try {
+    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/$Owner/$Repo/archive/refs/tags/$Tag.zip" -OutFile $zip
+    $ProgressPreference = $prev
+    $payload = Expand-Payload $EditionKey $Tag $zip
+    try { Save-Download $EditionKey $Tag $zip } catch {}   # not kept: the next switch downloads it again
+  } finally {
+    $ProgressPreference = $prev
+    Remove-Item -Force $zip -ErrorAction SilentlyContinue
+  }
+  return $payload
+}
+function Show-EditionChanged($Staged, [string]$EditionKey) {
+  # One extension ID for all three editions: the browser keeps the old files until it reloads them.
+  if (-not $Staged -or $Staged.Edition -eq $EditionKey) { return }
+  Write-Host ''
+  $text = 'Edition changed: ' + $Editions[$Staged.Edition].Name + ' -> ' + $Editions[$EditionKey].Name + '. In each browser ' +
+          'that loads it from ' + (Join-Path $InstallDir 'src') + ', open the extensions page and click Reload on ' +
+          '1Password Reborn (or restart the browser). In Firefox, install the new build with [4] Firefox.'
+  foreach ($l in (Split-Lines $text)) { Write-Mid $l 'Yellow' }
+}
 function Get-Payload([string]$EditionKey) {
   # The chosen edition's files: from -PayloadRoot, the folder this script runs from, the cache in
-  # $InstallDir, or a download of the edition's release tag (Resolve-PayloadSource decides).
+  # $InstallDir, its saved zip, or a download of the edition's release tag (Resolve-PayloadSource decides).
   if ($null -eq $script:Tags) { Initialize-Releases }
   $tag    = $script:Tags[$EditionKey].Tag
   $staged = Get-StagedRelease
+  $saved  = Get-SavedDownload $EditionKey
   $source = Resolve-PayloadSource -EditionKey $EditionKey -RootOk (Test-Payload $script:PayloadRoot $EditionKey) `
               -LocalEdition (Get-LocalEdition $PSScriptRoot) -Staged $staged -Tag $tag -LookupOk $script:LookupOk `
-              -CacheOk (Test-Payload $InstallDir $EditionKey)
+              -CacheOk (Test-Payload $InstallDir $EditionKey) -SavedTag $(if ($saved) { $saved.Tag } else { '' })
   switch ($source) {
     'payloadroot' { return $script:PayloadRoot }
     'local' {
@@ -308,17 +366,24 @@ function Get-Payload([string]$EditionKey) {
       else { Write-Host ("Couldn't read GitHub's releases - using the cached download (" + $staged.Tag + ').') -ForegroundColor Yellow }
       return $InstallDir
     }
+    'saved' {
+      if (Test-SavedZip $saved.Zip) {
+        if ($script:LookupOk) {
+          Write-Host ('Using the saved download of ' + $Editions[$EditionKey].Name + ' ' + $saved.Tag + ' (checksum ok) - not re-downloading.') -ForegroundColor DarkGray
+        } else {
+          Write-Host ("Couldn't read GitHub's releases - using the saved download of " + $Editions[$EditionKey].Name + ' (' + $saved.Tag + ').') -ForegroundColor Yellow
+        }
+        $payload = Expand-Payload $EditionKey $saved.Tag $saved.Zip
+        Show-EditionChanged $staged $EditionKey
+        return $payload
+      }
+      Write-Host ('The saved download of ' + $saved.Tag + ' does not match its checksum - downloading it again.') -ForegroundColor Yellow
+      Remove-SavedDownload $saved.Zip
+    }
   }
   if (-not $script:LookupOk) { Write-Host ("Couldn't read GitHub's releases - using " + $tag + '.') -ForegroundColor Yellow }
   $payload = Save-Payload $EditionKey $tag
-  if ($staged -and $staged.Edition -ne $EditionKey) {
-    # One extension ID for all three editions: the browser keeps the old files until it reloads them.
-    Write-Host ''
-    $text = 'Edition changed: ' + $Editions[$staged.Edition].Name + ' -> ' + $Editions[$EditionKey].Name + '. In each browser ' +
-            'that loads it from ' + (Join-Path $InstallDir 'src') + ', open the extensions page and click Reload on ' +
-            '1Password Reborn (or restart the browser). In Firefox, install the new build with [4] Firefox.'
-    foreach ($l in (Split-Lines $text)) { Write-Mid $l 'Yellow' }
-  }
+  Show-EditionChanged $staged $EditionKey
   return $payload
 }
 function Get-SelfScript {
@@ -393,6 +458,11 @@ function Get-EditionOfVersionName([string]$VersionName) {
   if ($VersionName -match '\(Reborn \d+\.\d+\.\d+\)')       { return 'main' }
   return $null
 }
+function Get-EditionOfTag([string]$Tag) {
+  # The edition a release tag belongs to, by the editions' tag patterns, or $null. Pure.
+  foreach ($e in $Editions.Values) { if ($Tag -match $e.Pattern) { return $e.Key } }
+  return $null
+}
 function Get-LocalEdition($root) {
   # Which edition the files under $root are (a clone, an unzipped release, a download): the one its
   # src\manifest.json names, when $root also holds every file of that edition; else $null.
@@ -429,11 +499,15 @@ function Resolve-PayloadSource {
   #   local        the folder the script runs from holds that edition (a clone, an unzipped release)
   #   cache        $InstallDir holds that edition at the release's tag, or at any tag when GitHub's
   #                release list could not be read
+  #   saved        .downloads holds a zip of that edition ($SavedTag) at the release's tag, or at
+  #                any tag when the release list could not be read
   #   download     everything else: the zip of the release tag
-  param([string]$EditionKey, [bool]$RootOk, [string]$LocalEdition, $Staged, [string]$Tag, [bool]$LookupOk, [bool]$CacheOk)
+  param([string]$EditionKey, [bool]$RootOk, [string]$LocalEdition, $Staged, [string]$Tag, [bool]$LookupOk, [bool]$CacheOk,
+        [string]$SavedTag)
   if ($RootOk) { return 'payloadroot' }
   if ($LocalEdition -and $LocalEdition -eq $EditionKey) { return 'local' }
   if ($CacheOk -and $Staged -and $Staged.Edition -eq $EditionKey -and ($Staged.Tag -eq $Tag -or -not $LookupOk)) { return 'cache' }
+  if ($SavedTag -and ($SavedTag -eq $Tag -or -not $LookupOk)) { return 'saved' }
   return 'download'
 }
 function Resolve-ModeEdition {

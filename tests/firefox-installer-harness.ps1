@@ -17,6 +17,7 @@
     { "fn": "edition-of", "versionName": "..." }             -> Get-EditionOfVersionName
     { "fn": "payload-ok", "root": "...", "edition": "1p7" }  -> Test-Payload
     { "fn": "local-edition", "root": "..." }                 -> Get-LocalEdition
+    { "fn": "edition-of-tag", "tag": "v1.8.0-1p7" }          -> Get-EditionOfTag
     { "fn": "source", ... }                                  -> Resolve-PayloadSource
     { "fn": "mode-edition", "edition": "", "staged": {...} }  -> Resolve-ModeEdition
     { "fn": "fit", "edition": "1p7", "hasOP4": bool, "op7": "7.9.834"|null }  -> Resolve-EditionFit
@@ -28,7 +29,7 @@
     { "fn": "confirm", "edition", "hasOP4", "op7" }           -> Confirm-Edition; { Ok, Output, Prompts }
     { "fn": "edition-menu", "tags", "hasOP4", "op7", "mark", "stagedLine", "lookupOk" }  -> Show-EditionMenu
     { "fn": "mode-menu", "edition", "payload" }               -> Show-ModeMenu; { Result, Started, Output, Prompts }
-    { "fn": "payload-flow", "edition", "tags", "lookupOk", "installDir", "payloadRoot" }  -> Get-Payload
+    { "fn": "payload-flow", "edition", "tags", "lookupOk", "installDir", "payloadRoot", "saved": { "Tag" }, "savedOk" }  -> Get-Payload
     { "fn": "elevate", "payload", "mode", "edition" }         -> Invoke-Elevated
     { "fn": "init", "ok": bool, "releases": [...] }           -> Initialize-Releases
     { "fn": "warning-lines" }                                -> the plain edition's warning text
@@ -43,7 +44,8 @@
   Write-Host; and for safety Invoke-WebRequest and Invoke-RestMethod (they throw: no test uses the
   network), New-Item and Set-Clipboard (no-ops), Get-Process (finds nothing: no test sees or closes a
   real browser), Test-Admin (never admin), Restart-Chrome (recorded), Get-ReleaseList (the case's
-  list) and Save-Payload (recorded, nothing downloaded).
+  list), Save-Payload (recorded, nothing downloaded), Get-SavedDownload and Test-SavedZip (the case's
+  "saved" and "savedOk"), Expand-Payload and Remove-SavedDownload (recorded, nothing unpacked or deleted).
   No real Firefox is launched, no registry is read, no browser is restarted.
 #>
 param(
@@ -58,6 +60,7 @@ $script:MockPaths = @{}; $script:MockChannels = @{}; $script:MockVersions = @{};
 $script:Started = @(); $script:Answers = @(); $script:Output = @(); $script:Prompts = @(); $script:Saved = @()
 $script:KeyPrompts = @()
 $script:MockReleaseList = $null
+$script:MockSaved = $null; $script:MockSavedOk = $false; $script:Expanded = @(); $script:Removed = @()
 
 function Test-Path { [CmdletBinding()] param([Parameter(Position = 0)][string]$Path, [string]$PathType)
   return [bool]$script:MockPaths[$Path] }
@@ -73,6 +76,12 @@ function Test-Admin { return $false }
 function Restart-Chrome { $script:Output += 'mock: Restart-Chrome' }
 function Get-ReleaseList { if ($script:MockReleaseList) { return $script:MockReleaseList }; return @{ Ok = $false; Releases = @() } }
 function Save-Payload([string]$EditionKey, [string]$Tag) { $script:Saved += ($EditionKey + ' ' + $Tag); return [string]$InstallDir }
+function Get-SavedDownload([string]$EditionKey) {
+  if (-not $script:MockSaved) { return $null }
+  return @{ Tag = $script:MockSaved; Zip = (Join-Path (Join-Path $InstallDir '.downloads') ($script:MockSaved + '.zip')) } }
+function Test-SavedZip([string]$Zip) { return $script:MockSavedOk }
+function Expand-Payload([string]$EditionKey, [string]$Tag, [string]$Zip) { $script:Expanded += ($EditionKey + ' ' + $Tag); return [string]$InstallDir }
+function Remove-SavedDownload([string]$Zip) { $script:Removed += $Zip }
 function Get-ItemProperty { [CmdletBinding()] param([string]$Path, [string]$Name)
   if ($script:MockVersions.ContainsKey($Path)) { return New-Object PSObject -Property @{ DisplayVersion = $script:MockVersions[$Path] } }
   throw "mock: no registry key $Path" }
@@ -106,6 +115,8 @@ foreach ($c in @($cases)) {
   $script:Started = @(); $script:Answers = @(); $script:Output = @(); $script:Prompts = @(); $script:Saved = @()
   $script:KeyPrompts = @()
   $script:MockReleaseList = $null
+  $script:MockSaved = $null; $script:MockSavedOk = [bool]$c.savedOk; $script:Expanded = @(); $script:Removed = @()
+  if ($c.saved) { $script:MockSaved = [string]$c.saved.Tag }
   foreach ($p in @($c.paths)) { if ($p) { $script:MockPaths[[string]$p] = $true } }
   if ($c.files) { foreach ($prop in $c.files.PSObject.Properties) { $script:MockFiles[$prop.Name] = [string]$prop.Value } }
   if ($c.channels) { foreach ($prop in $c.channels.PSObject.Properties) { $script:MockChannels[$prop.Name] = $prop.Value } }
@@ -142,8 +153,10 @@ foreach ($c in @($cases)) {
     'local-edition' { $results += @{ Edition = (Get-LocalEdition ([string]$c.root)) } }
     'source' {
       $results += @{ Source = (Resolve-PayloadSource -EditionKey ([string]$c.edition) -RootOk ([bool]$c.rootOk) -LocalEdition ([string]$c.local) `
-        -Staged (ConvertTo-Staged $c.staged) -Tag ([string]$c.tag) -LookupOk ([bool]$c.lookupOk) -CacheOk ([bool]$c.cacheOk)) }
+        -Staged (ConvertTo-Staged $c.staged) -Tag ([string]$c.tag) -LookupOk ([bool]$c.lookupOk) -CacheOk ([bool]$c.cacheOk) `
+        -SavedTag ([string]$c.savedTag)) }
     }
+    'edition-of-tag' { $results += @{ Edition = (Get-EditionOfTag ([string]$c.tag)) } }
     'mode-edition' { $results += @{ Edition = (Resolve-ModeEdition -Edition ([string]$c.edition) -Staged (ConvertTo-Staged $c.staged)) } }
     'fit' {
       $f = Resolve-EditionFit -EditionKey ([string]$c.edition) -HasOP4 ([bool]$c.hasOP4) -OP7Version $c.op7
@@ -193,7 +206,8 @@ foreach ($c in @($cases)) {
       $script:Tags = @{}; foreach ($p in $c.tags.PSObject.Properties) { $script:Tags[$p.Name] = @{ Tag = [string]$p.Value; Builtin = $false } }
       $got = $null; $err = $null
       try { $got = Get-Payload ([string]$c.edition) } catch { $err = $_.Exception.Message }
-      $results += @{ Payload = $got; Saved = @($script:Saved); Output = ($script:Output -join "`n"); Error = $err }
+      $results += @{ Payload = $got; Saved = @($script:Saved); Output = ($script:Output -join "`n"); Error = $err
+                     Expanded = @($script:Expanded); Removed = @($script:Removed) }
     }
     'elevate' {
       Invoke-Elevated ([string]$c.payload) ([string]$c.mode) ([string]$c.edition)

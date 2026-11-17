@@ -15,7 +15,7 @@ const FILES = {
   plain: ['src\\manifest.json', 'dist\\firefox\\1password-reborn-firefox-plain.xpi'],
 };
 const under = (root, files) => files.map((f) => root + '\\' + f);
-const source = (edition, extra = {}) => ({ fn: 'source', edition, rootOk: false, local: '', staged: null, tag: '', lookupOk: true, cacheOk: false, ...extra });
+const source = (edition, extra = {}) => ({ fn: 'source', edition, rootOk: false, local: '', staged: null, tag: '', lookupOk: true, cacheOk: false, savedTag: '', ...extra });
 const LOCAL = 'C:\\op4-test-local';
 const MAIN_VN = '4.7.5.93 (Reborn 1.5.0)';
 const local = (vn, files) => ({ fn: 'local-edition', root: LOCAL, paths: under(LOCAL, files),
@@ -60,6 +60,13 @@ describe('install.ps1: the release of each edition and where its files come from
       /* 31 */ local('4.7.5.96 (Reborn 1.8.0-1p7)', FILES['1p7']),
       /* 32 */ local(MAIN_VN, FILES['1p7']),
       /* 33 */ local('', []),
+      /* 34 */ source('main', { tag: 'v1.5.0', savedTag: 'v1.5.0', staged: { Edition: '1p7', Tag: 'v1.8.0-1p7' }, cacheOk: true }),
+      /* 35 */ source('main', { tag: 'v1.6.0', savedTag: 'v1.5.0' }),
+      /* 36 */ source('main', { tag: 'v1.5.0', savedTag: 'v1.4.0', lookupOk: false }),
+      /* 37 */ source('main', { tag: 'v1.5.0', savedTag: 'v1.5.0', staged: { Edition: 'main', Tag: 'v1.5.0' }, cacheOk: true }),
+      /* 38 */ source('main', { tag: 'v1.5.0', savedTag: 'v1.5.0', local: 'main' }),
+      /* 39 */ source('main', { tag: 'v1.5.0', lookupOk: false }),
+      /* 40 */ ...['v1.5.0', 'v1.8.0-1p7', 'v1.7.0-plain', 'v2.0.0-beta', ''].map((tag) => ({ fn: 'edition-of-tag', tag })),
     ]);
   });
 
@@ -106,6 +113,19 @@ describe('install.ps1: the release of each edition and where its files come from
       null,     // the manifest names Reborn, the files are another edition's
       null,     // no manifest
     ]);
+  });
+  it("an edition's saved download: at the release's tag, or offline at any tag; the staged copy and local files come first", () => {
+    assert.deepEqual(R.slice(34, 40).map((r) => r.Source), [
+      'saved',      // back to an edition saved at the release's tag
+      'download',   // a newer release than the saved one
+      'saved',      // the release list could not be read: the saved download, whatever its tag
+      'cache',      // the staged copy is that edition at that tag already
+      'local',      // the folder the script runs from holds that edition
+      'download',   // nothing saved, offline: the built-in tag
+    ]);
+  });
+  it('a saved download belongs to the edition its tag names', () => {
+    assert.deepEqual(R.slice(40, 45).map((r) => r.Edition), ['main', '1p7', 'plain', null, null]);
   });
 });
 
@@ -312,6 +332,10 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
       /* 22 */ { fn: 'init', ok: false },
       /* 23 */ { fn: 'warning-lines' },
       /* 24 */ { fn: 'unpacked', payload: 'C:\\op4-test-payload', paths: ['C:\\op4-test-payload\\src'], answers: ['6', '', '', ''] },
+      /* 25 */ flow('main', { ...staged('1p7 v1.8.0-1p7', '1p7'), saved: { Tag: 'v1.5.0' }, savedOk: true }),
+      /* 26 */ flow('main', { ...staged('1p7 v1.8.0-1p7', '1p7'), saved: { Tag: 'v1.5.0' }, savedOk: false }),
+      /* 27 */ flow('1p7', { lookupOk: false, saved: { Tag: 'v1.6.0-1p7' }, savedOk: true }),
+      /* 28 */ flow('1p7', { saved: { Tag: 'v1.6.0-1p7' }, savedOk: true }),
     ]);
   });
 
@@ -393,5 +417,16 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
     assert.deepEqual(trimmed(R[24]), ['Press Enter (or y) when the page is open', 'Press Enter (or y) when Developer mode is on',
       'Press Enter (or y) when the extension has loaded']);
     assert.match(R[24].Output, /Open the extensions page in Other/);
+  });
+  it('back to an edition saved before: its zip is unpacked when its checksum matches, else downloaded again; offline the saved zip of any tag', () => {
+    assert.deepEqual([R[25].Payload, R[25].Saved, R[25].Expanded, R[25].Removed], [INSTALL, [], ['main v1.5.0'], []]);
+    assert.match(R[25].Output, /Using the saved download of Reborn v1\.5\.0 \(checksum ok\) - not re-downloading\./);
+    assert.match(flat(R[25].Output), /Edition changed: 1Password 7 edition -> Reborn\./);
+    assert.deepEqual([R[26].Saved, R[26].Expanded, R[26].Removed], [['main v1.5.0'], [], [INSTALL + '\\.downloads\\v1.5.0.zip']]);
+    assert.match(R[26].Output, /The saved download of v1\.5\.0 does not match its checksum - downloading it again\./);
+    assert.match(flat(R[26].Output), /Edition changed: 1Password 7 edition -> Reborn\./);
+    assert.deepEqual([R[27].Saved, R[27].Expanded], [[], ['1p7 v1.6.0-1p7']]);
+    assert.match(R[27].Output, /Couldn't read GitHub's releases - using the saved download of 1Password 7 edition \(v1\.6\.0-1p7\)\./);
+    assert.deepEqual([R[28].Saved, R[28].Expanded], [['1p7 v1.8.0-1p7'], []]);  // a newer release than the saved one
   });
 });
