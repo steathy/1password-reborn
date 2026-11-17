@@ -33,10 +33,9 @@ test('no artifacts of the other editions on this branch', () => {
   }
 });
 
-test('the installer downloads this edition: its branch is the one of the Firefox update channel', () => {
+test('the installer stub marks this edition (the one installer on main downloads it from its release tag)', () => {
   const install = read('install.ps1').toString('utf8');
-  assert.ok(install.includes("$Branch = '1pass7-plain'"));
-  assert.ok(install.includes("$FirefoxXpiUnsigned = 'dist\\firefox\\1password-reborn-firefox-plain.xpi'"));
+  assert.ok(/\$StubEdition\s*=\s*'plain'/.test(install));
   assert.equal(install.includes('firefox-1p7.xpi'), false);
 });
 
