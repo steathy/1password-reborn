@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
+## [Unreleased]
+
+### Changed
+- `install.ps1` starts the one installer for the three editions, which lives on the main branch,
+  with this edition marked. It installs each edition from its latest release on GitHub.
+- README: the one-line command is the short link `https://tinyurl.com/1password-reborn` (to main's
+  `install.ps1`); the full GitHub address stays as the backup.
+
 ## [1.7.0-plain] - 2026-11-15
 
 Plain edition, branch `1pass7-plain` (1Password 7 for Windows only): the fewest interactions,
