@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { JSDOM } = require('jsdom');
 
 const FILES = ['ext/tldts.min.js', 'passkeys/authenticator.js', 'passkeys/request-manager.js',
   'passkeys/fill-script.js', 'passkeys/sw-passkeys.js'];
@@ -25,15 +26,64 @@ async function until(pred, label) {
 function boot(local, opts = {}) {
   const logs = [];
   const rec = (level) => (...a) => logs.push({ level, text: a.map(String).join(' ') });
-  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [] };
+  const calls = { autosave: [], executed: [], collected: [], filled: [], popup: 0, menus: [], storage: [], rebuilds: 0, action: [], windows: [] };
   const store = { local: copy(local || {}), session: {} };
+  // opts.browser: what the browser keeps for the extension beyond one worker run (the popup of the
+  // toolbar button); two boots of one test share it to play a worker restart.
+  const browser = opts.browser || { popup: '' };
+  // opts.asyncLocal: the local area answers later, in the order of the calls (like chrome.storage): a
+  //   read with a snapshot taken at call time, a write carried out and reported when its turn comes;
+  // opts.settingsError: chrome.runtime.lastError is set in the callbacks of every read of the card
+  //   style's key (true) or of its first read only ('first-read');
+  // opts.settingsThrows: local.get of that key throws; opts.sessionError: session.get fails.
+  const OPTION_KEYS = ['op4pk.style'];
+  const optionKeys = (keys) => keys.some((k) => OPTION_KEYS.includes(k));
+  let optionReads = 0;
   const area = (name) => ({
-    get: (k, cb) => cb(copy({ [k]: store[name][k] })),
-    set: (o, cb) => { Object.assign(store[name], copy(o)); if (cb) cb(); },
+    get: (k, cb) => {
+      const keys = Array.isArray(k) ? k : [k];
+      calls.storage.push([name, 'get', keys.join()]);
+      const mine = name === 'local' && optionKeys(keys);
+      if (mine && opts.settingsThrows) throw new Error('storage unavailable');
+      const bad = mine ? opts.settingsError === true || (opts.settingsError === 'first-read' && optionReads++ === 0)
+        : name === 'session' && opts.sessionError === true;
+      const snap = {};
+      if (!bad) for (const key of keys) if (store[name][key] !== undefined) snap[key] = copy(store[name][key]);
+      const run = () => { if (bad) chrome.runtime.lastError = { message: 'boom-read' }; try { cb(snap); } finally { chrome.runtime.lastError = undefined; } };
+      if (name === 'local' && opts.asyncLocal) setTimeout(run, 5); else run();
+    },
+    set: (o, cb) => {
+      const keys = Object.keys(o);
+      calls.storage.push([name, 'set', keys.join()]);
+      const run = () => {
+        const changes = {};
+        for (const k of keys) {
+          changes[k] = { newValue: copy(o[k]) };
+          if (store[name][k] !== undefined) changes[k].oldValue = copy(store[name][k]);
+        }
+        Object.assign(store[name], copy(o));
+        if (cb) cb();
+        chrome.storage.onChanged.fns.forEach((f) => f(copy(changes), name));     // like chrome.storage.onChanged
+      };
+      if (name === 'local' && opts.asyncLocal) setTimeout(run, 5); else run();
+    },
   });
   const chrome = {
-    runtime: { lastError: undefined, onConnect: listener() },
-    storage: { local: area('local'), session: area('session') },
+    runtime: { lastError: undefined, onConnect: listener(), getURL: (p) => 'chrome-extension://abc/' + p },
+    // opts.noOpenPopup: a browser without action.openPopup; opts.openPopupFails: it rejects (no window to hang the popup on);
+    // opts.openPopupHangs: it never answers (the worker run ends while it waits); opts.resetFails: setPopup('') rejects
+    action: Object.assign({ setPopup: (o) => {
+      calls.action.push(['setPopup', o.popup]);
+      if (o.popup === '' && opts.resetFails) return Promise.reject(new Error('boom-reset'));
+      browser.popup = o.popup;
+      return Promise.resolve();
+    } },
+      opts.noOpenPopup ? {} : { openPopup: () => {
+        calls.action.push(['openPopup']);
+        if (opts.openPopupHangs) return new Promise(() => {});
+        return opts.openPopupFails ? Promise.reject(new Error('no window')) : Promise.resolve();
+      } }),
+    storage: { local: area('local'), session: area('session'), onChanged: listener() },
     tabs: { query: (q, cb) => cb([{ id: 5, windowId: 1 }]), onActivated: listener(), onRemoved: listener() },
     // opts.lastFocused: what the browser says about the focus at a worker start (default: window 1 has it);
     // opts.focusError: that answer comes with chrome.runtime.lastError; opts.focusThrows: asking throws;
@@ -45,11 +95,11 @@ function boot(local, opts = {}) {
         try { cb(opts.focusError ? undefined : copy(opts.lastFocused || { id: 1, focused: true })); } finally { chrome.runtime.lastError = undefined; }
       };
       if (opts.lateFocus) setTimeout(run, 5); else run();
-    } },
+    }, create: (o, cb) => { calls.windows.push(copy(o)); if (cb) cb({ id: 99 }); } },
     contextMenus: {
       create: (o, cb) => { calls.menus.push(copy(o)); if (cb) cb(); },
-      remove: (id, cb) => { calls.menus = []; if (cb) cb(); },
-      removeAll: (cb) => { if (cb) cb(); },
+      remove: (id, cb) => { if (id === 'op4pk-root') calls.rebuilds++; calls.menus = calls.menus.filter((m) => m.id !== id && m.parentId !== id); if (cb) cb(); },
+      removeAll: (cb) => { calls.menus = []; if (cb) cb(); },
       onClicked: listener(),
     },
   };
@@ -79,6 +129,16 @@ function connect(env, tabId = 5, origin = 'https://webauthn.io') {
   });
   const last = (type) => [...posted].reverse().find((m) => m.type === type);
   return { posted, last, emit: (m) => msg.fns[0](m), send: async (m) => { msg.fns[0](m); await ticks(20); }, card: () => last('card').card };
+}
+// The real options page (jsdom) on a worker's fake chrome: the page and the worker share one store.
+function optionsPage(env) {
+  const dir = path.join(__dirname, '..', 'src', 'passkeys');
+  const dom = new JSDOM(fs.readFileSync(path.join(dir, 'options.html'), 'utf8'), { url: 'chrome-extension://abc/passkeys/options.html', runScripts: 'outside-only' });
+  dom.window.chrome = env.chrome;
+  dom.window.eval(fs.readFileSync(path.join(dir, 'options.js'), 'utf8'));
+  const d = dom.window.document;
+  return { d, close: () => dom.window.close(),
+    state: () => ({ style: d.querySelector('input[name=style]:checked').value, status: d.getElementById('status').textContent }) };
 }
 const CREATE = { rp: { id: 'webauthn.io', name: 'webauthn.io' }, user: { id: 'AQID', name: 'alice@example.com', displayName: 'Alice' },
   challenge: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', pubKeyCredParams: [{ type: 'public-key', alg: -7 }] };
@@ -231,4 +291,116 @@ test('a request right at a worker start waits for the focus answer: with another
   assert.equal(c.card().state, 'waiting');
   assert.equal(env.calls.popup, 1);
   noErrors(env);
+});
+
+/* ---------- reborn ports: the card style in its own key (design 5) ---------- */
+
+test('settings: the stored card style applies, valid values only; its key is read once, in its own call; the 1Password 7 edition\'s switch means nothing here', async () => {
+  const first = async (env) => { const c = connect(env); await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE }); return c.last('card'); };
+  let env = boot({ 'op4pk.style': 'op7' });
+  await ticks(10);
+  assert.deepEqual(env.calls.storage.filter((x) => x[0] === 'local' && x[1] === 'get'),
+    [['local', 'get', 'op4pk.index'], ['local', 'get', 'op4pk.style']]);
+  let msg = await first(env);
+  assert.deepEqual([msg.card.state, msg.style, msg.clock.total], ['create-prompt', 'op7', 120000]);
+  noErrors(env);
+  for (const [stored, want] of [[{ 'op4pk.style': 'op4' }, 'op4'], [{ 'op4pk.style': 'neon' }, 'reborn'], [{ 'op4pk.style': { style: 'op7' } }, 'reborn'], [{}, 'reborn'],
+    [{ 'op4pk.settings': { addToExisting: false }, 'op4pk.plain': { style: 'op7' } }, 'reborn']]) {   // other editions' keys
+    env = boot(stored);
+    await ticks(10);
+    msg = await first(env);
+    assert.equal(msg.style, want, JSON.stringify(stored));
+    noErrors(env);
+  }
+  env = boot({ 'op4pk.settings': { addToExisting: true } });                  // the switch on: main still saves at once, with no pick
+  await ticks(10);
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => env.calls.autosave.length === 1, 'saved at once');
+  assert.equal(env.calls.popup, 0);
+  assert.equal(env.calls.storage.some((x) => x[2].split(',').includes('op4pk.settings')), false);   // never read or written
+  noErrors(env);
+});
+
+test('settings: the worker follows its key at once, also after a failed first read and before the first read has answered; it writes nothing', async () => {
+  const STYLE = 'op4pk.style';
+  const writes = (env) => env.calls.storage.filter((x) => x[0] === 'local' && x[1] === 'set').map((x) => x[2]);
+  let env = boot({ [STYLE]: 'reborn' });
+  await ticks(10);
+  env.chrome.storage.local.set({ [STYLE]: 'op7' }, () => {});                  // the options page: a style
+  await ticks(10);
+  let c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  assert.equal(c.last('card').style, 'op7');
+  // while a card is up: the next card of the same request already has the new style
+  env.chrome.storage.local.set({ [STYLE]: 'op4' }, () => {});
+  await ticks(10);
+  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => c.card().state === 'create-saving', 'saving card');
+  assert.equal(c.last('card').style, 'op4');
+  // a value of the wrong kind is ignored; other keys and the session area are not followed
+  env.chrome.storage.local.set({ [STYLE]: 'neon' }, () => {});
+  env.chrome.storage.local.set({ 'op4pk.plain': { style: 'op7' } }, () => {});
+  env.chrome.storage.local.set({ 'op4pk.settings': { addToExisting: true } }, () => {});
+  env.chrome.storage.session.set({ [STYLE]: 'op7' }, () => {});
+  await ticks(10);
+  await c.send({ type: 'decline', id: 'c1', how: 'cancel' });
+  await c.send({ type: 'request', id: 'c2', kind: 'create', options: CREATE });
+  assert.equal(c.last('card').style, 'op4');
+  assert.deepEqual(writes(env), [STYLE, STYLE, STYLE, 'op4pk.plain', 'op4pk.settings']);   // the writes of this test alone: following is not writing
+  noErrors(env);
+  // the first read failed: this run starts with the default, and what is stored next is followed like any other change
+  env = boot({ [STYLE]: 'op7' }, { settingsError: 'first-read' });
+  await ticks(10);
+  c = connect(env);
+  await c.send({ type: 'request', id: 'g1', kind: 'get', options: GET });
+  assert.deepEqual([c.card().state, c.last('card').style], ['get-prompt', 'reborn']);
+  env.chrome.storage.local.set({ [STYLE]: 'op4' }, () => {});
+  await ticks(10);
+  await c.send({ type: 'approve', id: 'g1', stage: 'prompt' });
+  assert.deepEqual([c.card().state, c.last('card').style], ['waiting', 'op4']);
+  noErrors(env);
+  // a change that arrives before the first read has answered is the newer one
+  env = boot({ [STYLE]: 'reborn' }, { asyncLocal: true });
+  env.chrome.storage.onChanged.fns.forEach((f) => f({ [STYLE]: { newValue: 'op7' } }, 'local'));
+  await new Promise((r) => setTimeout(r, 60));
+  c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  assert.equal(c.last('card').style, 'op7');
+  noErrors(env);
+});
+
+test('settings: an unreadable key is logged and counts as Reborn; nothing is held up', async () => {
+  for (const [trouble, why] of [[{ settingsError: true }, 'boom-read'], [{ settingsThrows: true }, 'storage unavailable']]) {
+    const label = JSON.stringify(trouble);
+    const env = boot({ 'op4pk.style': 'op7' }, trouble);
+    await ticks(10);
+    const warned = env.logs.filter((l) => l.level === 'warn' && l.text.includes('settings unreadable'));
+    assert.equal(warned.length, 1, label);
+    assert.ok(warned[0].text.includes(why), label);
+    const c = connect(env);
+    await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+    assert.deepEqual([c.card().state, c.last('card').style], ['create-prompt', 'reborn'], label);
+    noErrors(env);
+  }
+});
+
+test('the options page and the worker on one store that answers late: the style chosen on the page applies to the next card; the worker writes nothing', async () => {
+  const env = boot({ 'op4pk.style': 'reborn' }, { asyncLocal: true });
+  await new Promise((r) => setTimeout(r, 60));                                 // the worker's first read has answered
+  const page = optionsPage(env);
+  try {
+    await new Promise((r) => setTimeout(r, 60));                               // and the page's
+    assert.deepEqual(page.state(), { style: 'reborn', status: '' });
+    page.d.querySelector('input[name=style][value=op7]').click();             // a style on the page
+    await new Promise((r) => setTimeout(r, 60));
+    assert.deepEqual(env.store.local, { 'op4pk.style': 'op7' });
+    assert.deepEqual(page.state(), { style: 'op7', status: '' });
+    const c = connect(env);
+    await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+    assert.equal(c.last('card').style, 'op7');                                 // the worker followed the page
+    assert.deepEqual(env.calls.storage.filter((x) => x[0] === 'local' && x[1] === 'set').map((x) => x[2]), ['op4pk.style']);   // the page's write alone
+    noErrors(env);
+  } finally { page.close(); }
 });

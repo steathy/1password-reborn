@@ -84,10 +84,37 @@
       for (const rpId of Object.keys(early)) for (const e of early[rpId]) index.add(rpId, e);
       resolve();
     }));
-  // Requests are handled only once the persisted index, the focused tab and the focus are known,
-  // so the first request after a worker start honours persisted exclusions and positive matches
-  // (spec: Create step 3; Chrome storage docs: "asynchronous preload from storage").
-  const ready = Promise.all([indexReady, activeReady, focusReady]);
+  /* ---------- settings: chrome.storage.local['op4pk.style'] = the card style ---------- */
+  // 'reborn' | 'op4' | 'op7', Reborn unless one of the three names is stored. Only the options page
+  // (passkeys/options.html) writes it; the worker reads it once at the start, follows every change
+  // of it and never writes it. The manager reads the style at every card (getSettings).
+  const STYLE_KEY = 'op4pk.style';
+  const STYLES = RM.STYLES;
+  const settings = { style: STYLES[0] };
+  let styleTouched = false;                           // a change of the key that beat the first read wins over the value read
+  const settingsReady = new Promise((resolve) => {
+    const unreadable = (why) => { console.warn(TAG, 'settings unreadable, the defaults apply:', why); resolve(); };
+    try {
+      chrome.storage.local.get([STYLE_KEY], (r) => {
+        const err = chrome.runtime.lastError;
+        if (err) return unreadable(err.message || String(err));
+        if (!styleTouched && r && STYLES.includes(r[STYLE_KEY])) settings.style = r[STYLE_KEY];
+        resolve();
+      });
+    } catch (e) { unreadable((e && e.message) || String(e)); }
+  });
+  if (chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local' || !changes[STYLE_KEY]) return;
+      styleTouched = true;
+      if (STYLES.includes(changes[STYLE_KEY].newValue)) settings.style = changes[STYLE_KEY].newValue;
+    });
+  }
+  // Requests are handled only once the persisted index, the card style, the focused tab and the
+  // focus are known, so the first request after a worker start honours persisted exclusions and
+  // positive matches (spec: Create step 3; Chrome storage docs: "asynchronous preload from
+  // storage") and is shown the way the user chose.
+  const ready = Promise.all([indexReady, activeReady, focusReady, settingsReady]);
 
   /* ---------- recovery store: chrome.storage.session['op4pk.recovery'] (cleared when the browser closes, or when the extension is updated, reloaded or disabled) ---------- */
   // Every operation is a read-modify-write of one object, so they run one at a time through a
@@ -144,6 +171,7 @@
     isNativeApp: () => typeof self.NativeMessagingConnection === 'function' && Agent.c instanceof self.NativeMessagingConnection,
     getActive,
     hasFocus: () => browserFocused,
+    getSettings: () => settings,
     log: (level, ...args) => (level === 'error' ? console.error : console.warn)(TAG, ...args),
   });
 
