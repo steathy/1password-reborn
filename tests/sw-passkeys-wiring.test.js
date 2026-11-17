@@ -404,3 +404,67 @@ test('the options page and the worker on one store that answers late: the style 
     noErrors(env);
   } finally { page.close(); }
 });
+
+/* ---------- reborn ports: Options… opens the options popup (design 5) ---------- */
+
+test("Options… stands at the top level of the button's menu and opens the options as the popup of the toolbar button, giving the button back; where that cannot be done, a small window", async () => {
+  const PAGE = 'passkeys/options.html';
+  const click = (env) => env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });
+  const START = ['setPopup', ''];                      // every worker start takes the popup off the button (see the next test)
+  const said = (env, text) => env.logs.some((l) => l.level === 'info' && l.text.includes(text));
+  let env = boot();
+  await ticks(10);
+  assert.deepEqual(env.calls.menus.filter((m) => m.id === 'op4pk-options'), [{ id: 'op4pk-options', title: 'Options…', contexts: ['action'] }]);   // no parent: beside the engine's own "1Password"
+  assert.equal(env.calls.menus[0].id, 'op4pk-options');
+  click(env);
+  await ticks(10);
+  assert.deepEqual(env.calls.action, [START, ['setPopup', PAGE], ['openPopup'], ['setPopup', '']]);   // set only for this opening: the button's click stays 1Password's
+  assert.deepEqual(env.calls.windows, []);
+  noErrors(env);
+  // the popup cannot be opened (no window to hang it on): the button is given back all the same, and a small window opens
+  env = boot({}, { openPopupFails: true });
+  await ticks(10);
+  click(env);
+  await ticks(10);
+  assert.deepEqual(env.calls.action, [START, ['setPopup', PAGE], ['openPopup'], ['setPopup', '']]);
+  assert.deepEqual(env.calls.windows, [{ url: 'chrome-extension://abc/' + PAGE + '?window=1', type: 'popup', width: 680, height: 580 }]);
+  assert.ok(said(env, 'no window'));                   // the console says why it is a window this time
+  noErrors(env);
+  // a browser without action.openPopup: the small window, and the button never gets the options popup
+  env = boot({}, { noOpenPopup: true });
+  await ticks(10);
+  click(env);
+  await ticks(10);
+  assert.deepEqual(env.calls.action, [START]);
+  assert.equal(env.calls.windows.length, 1);
+  assert.ok(said(env, 'action.openPopup is not available'));
+  noErrors(env);
+});
+
+test('a worker start takes the options popup off the toolbar button: a run that ended half-way cannot keep the left click', async () => {
+  const PAGE = 'passkeys/options.html';
+  const browser = { popup: '' };                       // the button's popup is the browser's state and outlives a worker run
+  let env = boot({}, { browser, openPopupHangs: true });
+  await ticks(10);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });
+  await ticks(10);
+  assert.equal(browser.popup, PAGE);                   // this run ends here, before it could give the button back
+  env = boot({}, { browser });                         // the next run of the worker
+  await ticks(10);
+  assert.equal(browser.popup, '');                     // the left click is 1Password's again
+  assert.deepEqual(env.calls.windows, []);
+  noErrors(env);
+});
+
+test('a popup that cannot be taken off the button is logged, and no window opens on top of the open popup', async () => {
+  const env = boot({}, { resetFails: true });
+  await ticks(10);
+  const warned = () => env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-reset')).length;
+  assert.equal(warned(), 1);                           // at the start
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });
+  await ticks(10);
+  assert.deepEqual(env.calls.action.slice(1), [['setPopup', 'passkeys/options.html'], ['openPopup'], ['setPopup', '']]);
+  assert.equal(warned(), 2);                           // after the opening
+  assert.deepEqual(env.calls.windows, []);             // the popup did open: nothing else opens
+  noErrors(env);
+});

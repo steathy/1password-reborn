@@ -273,15 +273,47 @@
   });
   chrome.tabs.onRemoved.addListener((tabId) => manager.onTabRemoved(tabId));
 
-  /* ---------- context menu: "1Password passkeys" → Re-save <title> / Discard all ---------- */
+  /* ---------- options popup ---------- */
+  // The options (passkeys/options.html) open as the extension's popup under the toolbar button.
+  // The button itself has no popup, because its click belongs to 1Password, so one is set just
+  // for this opening and taken away again at once. Where the browser cannot open it (no
+  // action.openPopup before Chrome 127, or no window to hang it on) a small window opens instead.
+  const OPTIONS_PAGE = 'passkeys/options.html';
+  // Takes the popup off the button, so that its click is 1Password's. Never throws: a failure is logged.
+  async function giveButtonBack() {
+    try { await chrome.action.setPopup({ popup: '' }); }
+    catch (e) { console.warn(TAG, 'the options popup could not be taken off the toolbar button:', (e && e.message) || e); }
+  }
+  async function openOptions() {
+    try {
+      if (!chrome.action || typeof chrome.action.openPopup !== 'function') throw new Error('action.openPopup is not available');
+      await chrome.action.setPopup({ popup: OPTIONS_PAGE });
+      try { await chrome.action.openPopup(); }
+      finally { await giveButtonBack(); }
+    } catch (e) {
+      console.info(TAG, 'the options open in a window, not as the popup:', (e && e.message) || e);
+      chrome.windows.create({ url: chrome.runtime.getURL(OPTIONS_PAGE + '?window=1'), type: 'popup', width: 680, height: 580 }, () => void chrome.runtime.lastError);
+    }
+  }
+  // The button's popup is the browser's state and outlives a worker run: a run that ended between
+  // the two setPopup calls above would leave the options on the left click. Every start takes
+  // the popup off again.
+  if (chrome.action && typeof chrome.action.setPopup === 'function') giveButtonBack();
+
+  /* ---------- context menu of the toolbar button: "Options…" at the top level; "1Password passkeys" → Re-save <title> / Discard all ---------- */
+  const OPTIONS_ID = 'op4pk-options';
   const ROOT_ID = 'op4pk-root';
   const CONTEXTS = ['action'];
   let rebuilding = Promise.resolve();
   function rebuildMenus() {
     rebuilding = rebuilding.then(async () => {
       const all = await sessionGet();
-      await new Promise((resolve) => chrome.contextMenus.remove(ROOT_ID, () => { void chrome.runtime.lastError; resolve(); }));
+      const gone = (id) => new Promise((resolve) => chrome.contextMenus.remove(id, () => { void chrome.runtime.lastError; resolve(); }));
+      await gone(OPTIONS_ID);
+      await gone(ROOT_ID);
       const done = () => void chrome.runtime.lastError;
+      // at the top level, beside the engine's own "1Password"
+      chrome.contextMenus.create({ id: OPTIONS_ID, title: 'Options\u2026', contexts: CONTEXTS }, done);
       chrome.contextMenus.create({ id: ROOT_ID, title: '1Password passkeys', contexts: CONTEXTS }, done);
       const ids = Object.keys(all);
       if (!ids.length) {
@@ -297,6 +329,7 @@
   }
   chrome.contextMenus.onClicked.addListener((info) => {
     const id = String(info.menuItemId);
+    if (id === OPTIONS_ID) { openOptions().catch((e) => console.warn(TAG, 'the options could not be opened', e)); return; }
     if (id === 'op4pk-discard') { recovery.clear().catch(() => {}); return; }   // failures are logged by mutateRecovery
     if (!id.startsWith('op4pk-resave:')) return;
     sessionGet().then((all) => {
