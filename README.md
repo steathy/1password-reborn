@@ -77,9 +77,9 @@ It marks the editions that fit the 1Password app it finds on your PC (1Password 
 latest release on GitHub. Then the edition's menu:
 
 ```
-[1] Load unpacked   (recommended; works on any PC, no admin)
-[3] Uninstall       (remove the force-install policy)
-[4] Firefox         (unsigned build for 1Password 7)
+[1] Load unpacked       (recommended; works on any PC, no admin)
+[3] Undo force install  (removes the Chrome policy only)
+[4] Firefox             (unsigned build for 1Password 7)
 [9] Other editions
 ```
 
@@ -91,7 +91,7 @@ latest release on GitHub. Then the edition's menu:
   path. (Browsers block scripts from opening the extensions page or adding unpacked
   extensions, so those clicks are yours.) No admin, works on any machine. The only
   ongoing cost is the browser's dismissable "Disable developer-mode extensions" bubble.
-- **Uninstall** removes a force-install policy that the main version set up (that copy of
+- **Undo force install** removes a force-install policy that the main version set up (that copy of
   Reborn would otherwise run next to this one); running [`uninstall.ps1`](uninstall.ps1)
   does the same. This edition does not force-install: 1Password 7 does not admit the
   force-install build's extension ID.
@@ -151,7 +151,7 @@ install Reborn fresh.
   `install.bat` inside the old `%LOCALAPPDATA%\1Password4-MV3` folder: it is the old
   installer and reinstalls 1password4-mv3.
 - **Force install:** this edition does not force-install. Run the installer's
-  **Uninstall**, let the browser remove the extension (`chrome://policy` → **Reload
+  **Undo force install**, let the browser remove the extension (`chrome://policy` → **Reload
   policies**, then restart the browser), then choose **Load unpacked**.
 - **The old folder:** delete `%LOCALAPPDATA%\1Password4-MV3` by hand once no browser or
   profile loads from it. The installer only points it out.
