@@ -269,3 +269,65 @@ test('copying the proposed title: trusted only, current or live text, success st
     assert.equal(f.card._root.querySelector('textarea'), null, 'temporary textarea removed');
   }
 });
+
+/* ---------- reborn ports: the line of buttons (design 4) ---------- */
+
+// Every card of this branch and what each of its buttons is and sends: [label, data-action, stage, extra]
+// for an approval, [label, data-action] for an exit.
+const EXITS = [['Use another way', 'fallback'], ['Cancel', 'cancel']];
+const CARDS = [
+  ['create-prompt', { site: 'GitHub', name: 'Alice', defaultTitle: T }, [['Save in 1Password', 'approve', 'prompt', { title: T }], ['Use another way', 'fallback']]],
+  ['create-excluded', { site: 'GitHub' }, EXITS],
+  ['create-saving', { app7: true, title: T }, [['Done', 'approve', 'saving', {}], ['Cancel', 'cancel']]],
+  ['create-saving', {}, [['Done', 'approve', 'saving', {}], ['Cancel', 'cancel']]],
+  ['get-prompt', { site: 'github.com' }, [['Yes', 'approve', 'prompt', {}], ['Use another way', 'fallback']]],
+  ['waiting', {}, EXITS],
+  ['notice', { text: 'That item has no passkey. Pick another.' }, EXITS],
+  ['busy', {}, EXITS],
+  ['confirm', { site: 'github.com', account: 'alice' }, [['Sign in', 'approve', 'confirm', {}]].concat(EXITS)],
+  ['not-connected', {}, EXITS],
+];
+
+test('all buttons of a card stand in one line at one width, at the right: every card, the three-button card included', () => {
+  const { card } = setup();
+  assert.deepEqual([...new Set(CARDS.map((c) => c[0]))].sort(), Object.keys(TEXT).sort());   // the table has every card
+  for (const [state, data, sends] of CARDS) {
+    card.show(state, data);
+    const rows = card._root.querySelectorAll('.row');
+    const groups = card._root.querySelectorAll('.row > .btns');
+    assert.deepEqual([rows.length, groups.length], [1, 1], state);
+    assert.equal(rows[0].children.length, 1, state);                                           // nothing beside the line
+    assert.deepEqual(Array.from(groups[0].children).map((el) => [el.tagName, el.textContent]), sends.map((s) => ['BUTTON', s[0]]), state);
+  }
+  card.show('confirm', { site: 'github.com', account: 'alice' });
+  assert.equal(card._root.querySelectorAll('.row > .btns > button').length, 3);                // three buttons, one line
+  card.show('create-saving', { app7: true, title: T });
+  assert.equal(card._root.querySelectorAll('.ptitle .icons > button').length, 2);              // the title note's icon buttons are not in the line
+  assert.equal(card._root.querySelectorAll('.btns .icons, .btns svg').length, 0);
+  const css = card._root.querySelector('style').textContent;
+  assert.ok(css.includes('.btns{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;margin-left:auto}'));   // one line, equal columns, at the right
+  assert.ok(css.includes('.row{display:flex}'));
+  assert.ok(/(^|\})button\{[^}]*white-space:nowrap/.test(css));                                // a label never breaks
+  assert.ok(/\.box\{[^}]*width:max-content;min-width:340px;max-width:calc\(100vw - 32px\)/.test(css));   // as wide as the line needs, within the window
+  assert.ok(css.includes('.title,.body{max-width:528px}'));                                    // long text wraps instead of widening the card
+  assert.ok(/\.box\{[^}]*max-height:calc\(100vh - 32px\);overflow:auto/.test(css));          // a low or narrow window: the card scrolls inside
+  assert.ok(/@media \(max-width:540px\)\{[^@]*\.btns\{grid-auto-flow:row;margin-left:0\}/.test(css));   // a narrow window stacks the buttons
+  assert.ok(css.includes('input,.note{display:block;box-sizing:border-box;width:0;min-width:100%}'));   // the title box and the notes take the card's width and never widen it
+  assert.ok(css.includes('button[data-action=approve]{background:#0a66c2;border-color:#0a66c2;color:#fff}'));   // the main button is the approve button
+  assert.ok(css.includes('.row button:disabled{opacity:.45;cursor:default}'));               // buttons disabled during a title edit stay dimmed
+});
+
+test('every card sends what it sent before, in every style: each button its approval or its exit', () => {
+  for (const style of [undefined, 'reborn', 'op4', 'op7']) {
+    for (const [state, data, sends] of CARDS) {
+      const label = state + ' in ' + style;
+      const t = setup({ isTrusted: () => true });
+      t.card.show(state, data, { style });
+      t.advance(500);
+      assert.deepEqual(Array.from(t.card._root.querySelectorAll('.row button')).map((b) => [b.textContent, b.dataset.action]), sends.map((s) => [s[0], s[1]]), label);
+      for (const s of sends) button(t.card, s[0]).click();
+      assert.deepEqual(t.calls.approve, sends.filter((s) => s.length > 2).map((s) => [s[2], s[3]]), label);
+      assert.deepEqual(t.calls.decline, sends.filter((s) => s.length === 2).map((s) => s[1]), label);
+    }
+  }
+});
