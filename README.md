@@ -77,10 +77,10 @@ later 1Password 7 the installer says so before it installs anything. Each editio
 latest release on GitHub, so you get the build that was tested. Then the edition's menu:
 
 ```
-[1] Load unpacked   (recommended; works on any PC, no admin)
-[2] Force install   (Reborn only; ENTERPRISE-MANAGED devices only)
-[3] Uninstall       (remove the force-install policy)
-[4] Firefox         (the edition's Firefox build)
+[1] Load unpacked       (recommended; works on any PC, no admin)
+[2] Force install       (Reborn only; ENTERPRISE-MANAGED devices only)
+[3] Undo force install  (removes the Chrome policy only)
+[4] Firefox             (the edition's Firefox build)
 [9] Other editions
 ```
 
@@ -163,8 +163,8 @@ install Reborn fresh.
   `src` folder by hand. Approve pairing if the 1Password app asks. Do not run the
   `install.bat` inside the old `%LOCALAPPDATA%\1Password4-MV3` folder: it is the old
   installer and reinstalls 1password4-mv3.
-- **Force install:** run the installer's **Uninstall**, let the browser remove the
-  extension (`chrome://policy` → **Reload policies**, then restart the browser), then
+- **Force install:** run the installer's **Undo force install**, let the browser remove
+  the extension (`chrome://policy` → **Reload policies**, then restart the browser), then
   choose **Force install**. Force installs made before 1.4.0 never received updates from
   GitHub (the crx had no `update_url`); the 1.4.0 crx carries one, so a fresh force install
   updates from GitHub. Not tested on a managed device.
@@ -257,7 +257,7 @@ native messaging, and its host admits only the extension IDs it lists, which inc
 unpacked ID (`phicbbndgmmpogmijjkbmdhpioaieaha`) but not the force-install ID
 (`mmfoigkanhpccidpokhjnomdcmgmjomj`).
 
-**Uninstall:** menu option 3, or run [`uninstall.ps1`](uninstall.ps1).
+**Undo force install:** menu option 3, or run [`uninstall.ps1`](uninstall.ps1).
 
 **Rebuild after changing `src/`:** run `build\pack.ps1` (needs Chrome + Node). It
 re-signs the crx (its manifest gets `update_url`) and refreshes `dist/1password-reborn.crx` + `dist/extension.json`;

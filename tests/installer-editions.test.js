@@ -204,8 +204,8 @@ describe('install.ps1: the app gate, the answers and the menus', { skip: SKIP },
   it("an edition's menu: Force install only for Reborn, 9 goes back to the editions", () => {
     assert.deepEqual(R.slice(37, 47).map((r) => r.Choice), ['unpacked', 'force', null, 'uninstall', 'firefox', 'back', 'quit', 'quit', null, null]);
     assert.deepEqual(R[47], ['[1] Load unpacked | recommended - any PC, no admin', '[2] Force install | no dev-mode nag, managed devices only',
-      '[3] Uninstall | remove the force-install policy', '[4] Firefox | signed build for 1Password 4; unsigned for 7', '[9] Other editions | ', '[0] Quit | ']);
-    assert.deepEqual(R[48], ['[1] Load unpacked | recommended - any PC, no admin', '[3] Uninstall | remove the force-install policy',
+      '[3] Undo force install | removes the Chrome policy only', '[4] Firefox | signed build for 1Password 4; unsigned for 7', '[9] Other editions | ', '[0] Quit | ']);
+    assert.deepEqual(R[48], ['[1] Load unpacked | recommended - any PC, no admin', '[3] Undo force install | removes the Chrome policy only',
       '[4] Firefox | unsigned build for 1Password 7', '[9] Other editions | ', '[0] Quit | ']);
   });
   it('the edition menu lists the three editions with their release, what they are, whether they fit, and the mark', () => {
@@ -391,6 +391,8 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
     assert.equal(R[13].Result, 'quit');
     assert.match(R[13].Output, /Other editions/);
     assert.doesNotMatch(R[13].Output, /Force install/);
+    const rows = R[13].Output.split('\n');                                       // the label column follows the longest label
+    for (const s of [' Load unpacked' + ' '.repeat(7), ' Undo force install' + ' '.repeat(2), ' Firefox' + ' '.repeat(13)]) assert.ok(rows.includes(s), JSON.stringify(s));
   });
   it('the files: the cache when current, a download of a newer release or another edition (with the reload hint), the cache or the built-in tag when GitHub cannot be read', () => {
     assert.deepEqual([R[14].Payload, R[14].Saved], [INSTALL, []]);

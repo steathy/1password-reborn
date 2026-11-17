@@ -15,10 +15,10 @@
     [2] 1Password 7 edition        password and passkey in one login
     [3] 1Password 7 Plain edition  fewest clicks, for experienced users (it warns first)
   Then that edition's menu:
-    [1] Load unpacked  - no admin; stages files and you click 'Load unpacked' once
-    [2] Force install  - Reborn only: policy install; no dev-mode nag (needs admin, managed devices)
-    [3] Uninstall      - remove the force-install policy
-    [4] Firefox        - opens the edition's Firefox build
+    [1] Load unpacked       - no admin; stages files and you click 'Load unpacked' once
+    [2] Force install       - Reborn only: policy install; no dev-mode nag (needs admin, managed devices)
+    [3] Undo force install  - removes the Chrome force-install policy only (uninstall.ps1 does the same)
+    [4] Firefox             - opens the edition's Firefox build
     [9] Other editions
   The numbered menus answer on one key (no Enter); questions and the plain edition's "yes" take Enter.
 
@@ -611,7 +611,7 @@ function Get-ModeRows([string]$EditionKey) {
   if ($EditionKey -eq 'main') { $ff = 'signed build for 1Password 4; unsigned for 7' }
   $rows = @(@{ Key = '[1]'; KeyColor = 'Green'; Label = 'Load unpacked'; Hint = 'recommended - any PC, no admin' })
   if ($Editions[$EditionKey].Force) { $rows += @{ Key = '[2]'; KeyColor = 'Yellow'; Label = 'Force install'; Hint = 'no dev-mode nag, managed devices only' } }
-  $rows += @{ Key = '[3]'; KeyColor = 'Yellow'; Label = 'Uninstall';      Hint = 'remove the force-install policy' }
+  $rows += @{ Key = '[3]'; KeyColor = 'Yellow'; Label = 'Undo force install'; Hint = 'removes the Chrome policy only' }
   $rows += @{ Key = '[4]'; KeyColor = 'Green';  Label = 'Firefox';        Hint = $ff }
   $rows += @{ Key = '[9]'; KeyColor = 'Cyan';   Label = 'Other editions'; Hint = '' }
   $rows += @{ Key = '[0]'; KeyColor = 'Red';    Label = 'Quit';           Hint = '' }
@@ -1019,7 +1019,8 @@ function Read-MenuKey($Prompt) {
   }
 }
 function Write-MenuRows($rows) {
-  $labelW = 15; $first = $true
+  $labelW = [Math]::Max(15, 2 + ($rows | ForEach-Object { $_.Label.Length } | Measure-Object -Maximum).Maximum)   # the longest label, two spaces
+  $first = $true
   foreach ($r in $rows) {
     if (-not $first) { Write-Host '' }   # blank line = ~1 line gap (a console's minimum step)
     $first = $false
