@@ -341,17 +341,30 @@ dimmed page:
 - **Use another way** is on every card except the one shown while a new passkey is
   being saved (Done / Cancel only). It hands the request to the browser's own
   passkey dialog (Windows Hello, security key, phone).
+- **Every card counts down:** the time left stands in the top line and a bar along the bottom
+  edge shrinks with it; both turn red at about a third left. The time is the site's own limit
+  for the request, at least 30 seconds and at most ten minutes. When it is up, the card goes
+  and the site reports that the request failed.
+- **Options:** right-click the toolbar icon and choose **Options…**. They open under the icon
+  (in a small window where the browser cannot do that): the **card style** (Reborn, 1Password 4
+  or 1Password 7), with a sample of the save card. A change is saved as you make it and applies
+  to the next card. In every style all buttons of a card stand in one line at one width.
 
 **Where the key lives.** Inside the item's encrypted details, exactly as protected as
 the password next to it (OPVault encryption, ciphertext on Dropbox, the encrypted
 channel to the app). The field's JSON follows Bitwarden's `fido2Credentials` schema;
-`tools/1pif-to-bitwarden.js` turns a 1Password 4 export (classic 1PIF, or the
-OPVault-style JSON that 1Password 4.6 for Windows writes under File → Export) into a
-Bitwarden JSON import that restores working passkeys (items in the trash are skipped;
-the tool refuses to write over its input file). Do not run passkey items through
-Bitwarden's own 1PIF importer (search for `[Passkey]` in 1Password 4 to find them): it
-would copy the private key into a visible Bitwarden password. Editing the concealed field by hand breaks the passkey; Dropbox's file
-history is the undo.
+`tools/1pif-to-bitwarden.js` turns a 1PIF export into a Bitwarden JSON import that
+restores working passkeys (items in the trash are skipped; the tool refuses to write over
+its input file). 1Password 4 exports under File → Export (classic 1PIF, or the
+OPVault-style JSON that 1Password 4.6 for Windows writes). 1Password 7 for Windows exports
+the items you select: right-click them → **Export** → *1Password Interchange Format
+(.1pif)*. The tool reads both kinds of passkey item: Reborn's, with the concealed
+`passkey` field, and those of the 1Password 7 editions, with the passkey as a text field
+under "Saved on &lt;site&gt;"; it carries a login's own password unless that password is
+the passkey itself. Do not run passkey items through Bitwarden's own 1PIF importer
+(search for `[Passkey]` in 1Password 4 to find them): it would copy the private key into
+a visible Bitwarden password or field. Editing the passkey field by hand breaks the
+passkey; Dropbox's file history is the undo.
 
 **Limitations.**
 - Chromium 111+ or Firefox 140+ (verified in Firefox 158 in the 1.5.0 gates); top-level frames; modal requests only. Sites that use the browser's
@@ -362,14 +375,20 @@ history is the undo.
 - The user-verification bit is set whenever the vault is unlocked and you clicked
   Sign in; there is no per-operation PIN or biometric. Anyone at your unlocked PC with
   the vault unlocked could use these passkeys, just as they could copy your passwords.
-- One passkey request at a time can use the 1Password popup; a second tab waits and
-  continues when you switch to it. Switching tab or window while waiting cancels. The
+- One passkey request at a time can use the 1Password popup, and only from the tab you are
+  looking at while the browser is in front: a request in another tab, or one that a page
+  starts while you are in another program, waits and continues when you switch to it.
+  Switching tab or window while the popup waits for your pick cancels that request. The
   app shows one popup at a time and switching tabs closes it; if a waiting request
   shows no popup, click the 1Password toolbar button and pick the item there.
 - The card lives in the page's DOM. Its buttons ignore scripted clicks and clicks in
   the first 500 ms, but a page on the same site could still hide or cover it.
 - If you cancel the app's save dialog, re-send the item from the toolbar icon's
-  right-click menu **1Password passkeys → Re-save …** (kept until the browser closes, or the extension is updated, reloaded or disabled). With 1Password 7, choose **Create New** in its window; no card is shown for a re-save.
+  right-click menu **1Password passkeys → Re-save …**. That menu shows only while Reborn holds
+  a copy of a new passkey: from the save until 1Password first hands the passkey back (at a
+  sign-in or a fill of that item), or until the browser closes or the extension is updated,
+  reloaded or disabled. With 1Password 7, choose **Create New** in its window; no card is shown
+  for a re-save.
 - Passkeys are unusable from 1Password 7 on the iPhone, which shows the passkey as the
   item's password (see above); register a second passkey there in iCloud Keychain.
   Sites accept several passkeys per account.
@@ -382,7 +401,7 @@ src/                    the loadable / packable MV3 extension
   sw-bootstrap.js       Chrome entry point: imports bg/ and the engine
   bg/                   background shims shared by Chrome and Firefox (before/after the engine)
   rules/                declarativeNetRequest rules (deep link + dead-page redirect)
-  passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core)
+  passkeys/             passkey support (page shim, bridge + card, worker wiring, crypto core, options popup)
   ext/tldts.min.js      public-suffix list (rpId validation), unmodified
   paired.html           "Connected" page shown in place of the retired welcome page
   global.min.js         1Password engine, unmodified

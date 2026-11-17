@@ -5,9 +5,33 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
-## [Unreleased]
+## [1.8.0] - unreleased
+
+Reborn for 1Password 4 and 7, one item per passkey. From this release on the three editions
+share one version number: Reborn 1.8.0, the 1Password 7 edition 1.8.0-1p7 and the plain edition
+1.8.0-plain. Reborn takes over six designs of the plain edition, as the 1Password 7 edition did
+in 1.8.0-1p7; its own flows (the editable title, Done, the Sign in click) stay as in 1.5.0.
+
+### Added
+- **Options under the toolbar icon:** right-click → **Options…** opens a popup with the card
+  style and a sample of the save card. A change is saved as you make it and applies to the next
+  card.
+- **Countdown on every card:** the time left and a bar, red from about a third left. A request
+  still lives as long as the site allows (30 seconds to ten minutes).
+- **Three card styles:** Reborn, 1Password 4 and 1Password 7. In each, all buttons of a card
+  stand in one line at one width.
 
 ### Changed
+- Only the tab you are looking at can open the 1Password popup, and only while the browser is
+  in front: a request from another tab, or one that a page starts while you are in another
+  program, waits until you switch to it.
+- **Options…** stands at the top level of the toolbar icon's right-click menu. The menu
+  **1Password passkeys** (Re-save, Discard all) shows only while Reborn holds a copy of a new
+  passkey.
+- `tools/1pif-to-bitwarden.js` reads both kinds of passkey item: Reborn's concealed `passkey`
+  field and the "Saved on &lt;site&gt;" text field of the 1Password 7 editions; it carries a
+  login's own password unless that password is the passkey itself. README: how 1Password 7 for
+  Windows exports a 1PIF file.
 - **One installer for the three editions.** `install.ps1` asks first which edition to install:
   Reborn, the 1Password 7 edition or the plain edition. It marks the ones that fit the 1Password
   app it finds (1Password 7 up to 7.9.834), installs each from its latest release on GitHub
@@ -21,6 +45,12 @@ release version; the bundled extension's manifest carries its own `4.7.5.x` vers
   the files).
 - README: the one-line command is the short link `https://tinyurl.com/1password-reborn` (to main's
   `install.ps1`); the full GitHub address stays as the backup.
+- The installer's built-in release tags, used when GitHub's release list cannot be read, are
+  v1.8.0, v1.8.0-1p7 and v1.8.0-plain.
+- Bundled version **4.7.5.98**, so force installs pick up the release.
+
+### Fixed
+- A request id that a page sends again can no longer act for the request that has ended.
 
 ## [1.5.0] - 2026-10-31
 
