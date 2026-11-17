@@ -468,3 +468,73 @@ test('a popup that cannot be taken off the button is logged, and no window opens
   assert.deepEqual(env.calls.windows, []);             // the popup did open: nothing else opens
   noErrors(env);
 });
+
+/* ---------- reborn ports: the menu of the toolbar button (ruling B5) ---------- */
+
+test('menu: Options… at the top level, always; "1Password passkeys" with Re-save and Discard all only while a copy is held', async () => {
+  const env = boot();
+  await ticks(10);
+  const rows = () => env.calls.menus.map((m) => [m.id, m.parentId, m.type, m.title, m.contexts.join()]);
+  const options = ['op4pk-options', undefined, undefined, 'Options…', 'action'];
+  assert.deepEqual(rows(), [options]);                                         // no submenu, no "No unsaved passkeys"
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => env.calls.menus.length === 4, 'menu with a copy');
+  const id = Object.keys(env.store.session['op4pk.recovery'])[0];
+  const withCopy = [
+    options,
+    ['op4pk-root', undefined, undefined, '1Password passkeys', 'action'],
+    ['op4pk-resave:' + id, 'op4pk-root', undefined, 'Re-save [Passkey] webauthn.io - Alice', 'action'],
+    ['op4pk-discard', 'op4pk-root', undefined, 'Discard all', 'action'],
+  ];
+  assert.deepEqual(rows(), withCopy);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-resave:' + id });
+  await until(() => env.calls.autosave.length === 2, 're-save');
+  assert.deepEqual(env.calls.autosave[1], env.calls.autosave[0]);
+  env.chrome.contextMenus.removeAll();                                         // the engine reconnects and wipes the menus
+  await until(() => env.calls.menus.length === 4, 'menu rebuilt');
+  assert.deepEqual(rows(), withCopy);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-discard' });
+  await until(() => Object.keys(env.store.session['op4pk.recovery']).length === 0, 'copies discarded');
+  await until(() => env.calls.menus.length === 1, 'Options… is left');
+  assert.deepEqual(rows(), [options]);
+  assert.deepEqual(env.calls.action, [['setPopup', '']]);                      // nothing but the reset of the worker start: no click here opened the options
+  noErrors(env);
+});
+
+test('menu: rebuilt when a copy changed, not on every recovery operation and not for the card style', async () => {
+  const env = boot();
+  await ticks(10);
+  assert.equal(env.calls.rebuilds, 1);                                         // at the start
+  const c = connect(env);
+  await c.send({ type: 'request', id: 'c1', kind: 'create', options: CREATE });
+  await c.send({ type: 'approve', id: 'c1', stage: 'prompt', title: '' });
+  await until(() => env.calls.menus.length === 4, 'menu with the new copy');
+  assert.equal(env.calls.rebuilds, 2);
+  const passkey = env.calls.autosave[0][0].collectedDocument.fields.find((f) => f.htmlName === 'passkey').value;   // what 1Password keeps and fills back
+  const fill = () => env.sandbox.AgentHandlers.executeFillScript({ scripts: [{ documentUUID: 'd1', script: [{ action: 'fill', values: ['__op4pk', passkey] }] }] });
+  fill();                                                                      // seen in a fill: the copy is not needed any more
+  await until(() => Object.keys(env.store.session['op4pk.recovery']).length === 0, 'the copy removed');
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(env.calls.rebuilds, 3);
+  assert.equal(env.calls.menus.length, 1);                                     // Re-save is gone
+  fill();                                                                      // the same passkey again: no copy changed
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(env.calls.rebuilds, 3);                                         // the menu is left alone
+  env.chrome.storage.local.set({ 'op4pk.style': 'op7' }, () => {});           // the options page changes the card style
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(env.calls.rebuilds, 3);                                         // no rebuild for it
+  noErrors(env);
+});
+
+test('menu: Options… is there even when the copies cannot be read', async () => {
+  const env = boot({}, { sessionError: true });
+  await ticks(10);
+  assert.deepEqual(env.calls.menus.map((m) => [m.id, m.parentId]), [['op4pk-options', undefined]]);
+  assert.equal(env.logs.filter((l) => l.level === 'warn' && l.text.includes('boom-read')).length, 1);
+  env.chrome.contextMenus.onClicked.fns[0]({ menuItemId: 'op4pk-options' });  // and it opens the options
+  await ticks(10);
+  assert.deepEqual(env.calls.action, [['setPopup', ''], ['setPopup', 'passkeys/options.html'], ['openPopup'], ['setPopup', '']]);
+  noErrors(env);
+});
