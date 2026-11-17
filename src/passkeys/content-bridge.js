@@ -37,7 +37,7 @@
       if (msg.type === 'card') {
         if (msg.card.state === 'none') { hideCardFor(msg.id); return; }
         currentId = msg.id;
-        getCard().show(msg.card.state, msg.card);
+        getCard().show(msg.card.state, msg.card, { clock: msg.clock, style: msg.style });   // the request clock and the card style travel beside the card
         return;
       }
       if (msg.type === 'reply') {
