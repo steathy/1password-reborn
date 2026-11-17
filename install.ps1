@@ -65,6 +65,7 @@ $UpdateUrl  = "$RawBase/dist/updates.xml"
 $FirefoxXpiSigned   = 'dist\firefox\1password-reborn-firefox.xpi'
 $FirefoxXpiUnsigned = 'dist\firefox\1password-reborn-firefox-1p7.xpi'
 $ForceInstallId = 'mmfoigkanhpccidpokhjnomdcmgmjomj'   # Reborn's signed crx (build/key.pem); Uninstall removes its force-install policy
+$script:PayloadNotes = @()   # the lines of the last download step, for the edition's menu (Get-Payload, Show-ModeMenu)
 
 # The three editions (docs: one installer for the three editions). Pattern: the tags of the
 # edition's releases; Fallback: the tag used when GitHub's release list cannot be read; Files: what
@@ -336,6 +337,12 @@ function Save-Payload([string]$EditionKey, [string]$Tag) {
   }
   return $payload
 }
+function Add-PayloadNote([string]$Text, [string]$Color) {
+  # A line of the download step: printed now, and kept in $script:PayloadNotes for the edition's
+  # menu, which clears the screen and shows them under its title.
+  Write-Host $Text -ForegroundColor $Color
+  $script:PayloadNotes += @{ Text = $Text; Color = $Color }
+}
 function Show-EditionChanged($Staged, [string]$EditionKey) {
   # One extension ID for all three editions: the browser keeps the old files until it reloads them.
   if (-not $Staged -or $Staged.Edition -eq $EditionKey) { return }
@@ -344,10 +351,13 @@ function Show-EditionChanged($Staged, [string]$EditionKey) {
           'that loads it from ' + (Join-Path $InstallDir 'src') + ', open the extensions page and click Reload on ' +
           '1Password Reborn (or restart the browser). In Firefox, install the new build with [4] Firefox.'
   foreach ($l in (Split-Lines $text)) { Write-Mid $l 'Yellow' }
+  $script:PayloadNotes += @{ Text = $text; Color = 'Yellow' }
 }
 function Get-Payload([string]$EditionKey) {
   # The chosen edition's files: from -PayloadRoot, the folder this script runs from, the cache in
   # $InstallDir, its saved zip, or a download of the edition's release tag (Resolve-PayloadSource decides).
+  # Its lines are kept in $script:PayloadNotes for the edition's menu.
+  $script:PayloadNotes = @()
   if ($null -eq $script:Tags) { Initialize-Releases }
   $tag    = $script:Tags[$EditionKey].Tag
   $staged = Get-StagedRelease
@@ -358,30 +368,30 @@ function Get-Payload([string]$EditionKey) {
   switch ($source) {
     'payloadroot' { return $script:PayloadRoot }
     'local' {
-      Write-Host ('Using the files next to this script: ' + $PSScriptRoot) -ForegroundColor DarkGray
+      Add-PayloadNote ('Using the files next to this script: ' + $PSScriptRoot) 'DarkGray'
       return $PSScriptRoot
     }
     'cache' {
-      if ($staged.Tag -eq $tag) { Write-Host ('Cached download is current (' + $tag + ') - not re-downloading.') -ForegroundColor DarkGray }
-      else { Write-Host ("Couldn't read GitHub's releases - using the cached download (" + $staged.Tag + ').') -ForegroundColor Yellow }
+      if ($staged.Tag -eq $tag) { Add-PayloadNote ('Cached download is current (' + $tag + ') - not re-downloading.') 'DarkGray' }
+      else { Add-PayloadNote ("Couldn't read GitHub's releases - using the cached download (" + $staged.Tag + ').') 'Yellow' }
       return $InstallDir
     }
     'saved' {
       if (Test-SavedZip $saved.Zip) {
         if ($script:LookupOk) {
-          Write-Host ('Using the saved download of ' + $Editions[$EditionKey].Name + ' ' + $saved.Tag + ' (checksum ok) - not re-downloading.') -ForegroundColor DarkGray
+          Add-PayloadNote ('Using the saved download of ' + $Editions[$EditionKey].Name + ' ' + $saved.Tag + ' (checksum ok) - not re-downloading.') 'DarkGray'
         } else {
-          Write-Host ("Couldn't read GitHub's releases - using the saved download of " + $Editions[$EditionKey].Name + ' (' + $saved.Tag + ').') -ForegroundColor Yellow
+          Add-PayloadNote ("Couldn't read GitHub's releases - using the saved download of " + $Editions[$EditionKey].Name + ' (' + $saved.Tag + ').') 'Yellow'
         }
         $payload = Expand-Payload $EditionKey $saved.Tag $saved.Zip
         Show-EditionChanged $staged $EditionKey
         return $payload
       }
-      Write-Host ('The saved download of ' + $saved.Tag + ' does not match its checksum - downloading it again.') -ForegroundColor Yellow
+      Add-PayloadNote ('The saved download of ' + $saved.Tag + ' does not match its checksum - downloading it again.') 'Yellow'
       Remove-SavedDownload $saved.Zip
     }
   }
-  if (-not $script:LookupOk) { Write-Host ("Couldn't read GitHub's releases - using " + $tag + '.') -ForegroundColor Yellow }
+  if (-not $script:LookupOk) { Add-PayloadNote ("Couldn't read GitHub's releases - using " + $tag + '.') 'Yellow' }
   $payload = Save-Payload $EditionKey $tag
   Show-EditionChanged $staged $EditionKey
   return $payload
@@ -1082,18 +1092,24 @@ function Show-ModeMenu([string]$EditionKey, $Payload) {
   $title = $e.Name
   $rel = Get-ReleaseOfPayload $Payload
   if ($rel) { $title += ' ' + $rel }
+  $notes = @($script:PayloadNotes | Where-Object { $_ }); $script:PayloadNotes = @()   # the download step's lines, until an action has run
   while ($true) {
     Clear-Host
     Write-TitleBar
     Write-Mid $title 'White'
     Write-Mid ('    ' + $e.About) 'Gray'
     Write-Host ''
+    if ($notes.Count) {
+      foreach ($n in $notes) { foreach ($l in (Split-Lines $n.Text)) { Write-Mid $l $n.Color } }
+      Write-Host ''
+    }
     Write-MenuRows (Get-ModeRows $EditionKey)
     Write-Host ''
     Show-OldInstallNotice $Payload
     $choice = Resolve-ModeChoice -Answer (Read-MenuKey ((' ' * (Get-Margin)) + 'Choose')) -EditionKey $EditionKey
     if ($choice -eq 'back' -or $choice -eq 'quit') { return $choice }
     if (-not $choice) { continue }
+    $notes = @()
     try {
       switch ($choice) {
         'unpacked'  { Install-Unpacked $Payload }

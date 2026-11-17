@@ -28,7 +28,7 @@
     { "fn": "split", "text": "...", "width": 58 }            -> Split-Lines
     { "fn": "confirm", "edition", "hasOP4", "op7" }           -> Confirm-Edition; { Ok, Output, Prompts }
     { "fn": "edition-menu", "tags", "hasOP4", "op7", "mark", "stagedLine", "lookupOk" }  -> Show-EditionMenu
-    { "fn": "mode-menu", "edition", "payload" }               -> Show-ModeMenu; { Result, Started, Output, Prompts }
+    { "fn": "mode-menu", "edition", "payload", "notes": [{ "Text", "Color" }] }  -> Show-ModeMenu; { Result, Started, Output, Prompts }
     { "fn": "payload-flow", "edition", "tags", "lookupOk", "installDir", "payloadRoot", "saved": { "Tag" }, "savedOk" }  -> Get-Payload
     { "fn": "elevate", "payload", "mode", "edition" }         -> Invoke-Elevated
     { "fn": "init", "ok": bool, "releases": [...] }           -> Initialize-Releases
@@ -116,6 +116,7 @@ foreach ($c in @($cases)) {
   $script:KeyPrompts = @()
   $script:MockReleaseList = $null
   $script:MockSaved = $null; $script:MockSavedOk = [bool]$c.savedOk; $script:Expanded = @(); $script:Removed = @()
+  $script:PayloadNotes = @()
   if ($c.saved) { $script:MockSaved = [string]$c.saved.Tag }
   foreach ($p in @($c.paths)) { if ($p) { $script:MockPaths[[string]$p] = $true } }
   if ($c.files) { foreach ($prop in $c.files.PSObject.Properties) { $script:MockFiles[$prop.Name] = [string]$prop.Value } }
@@ -196,6 +197,7 @@ foreach ($c in @($cases)) {
       $results += @{ Answer = [string]$answer; Output = ($script:Output -join "`n"); Prompts = @($script:Prompts); KeyPrompts = @($script:KeyPrompts) }
     }
     'mode-menu' {
+      $script:PayloadNotes = @(@($c.notes) | Where-Object { $_ } | ForEach-Object { @{ Text = [string]$_.Text; Color = [string]$_.Color } })
       $r = Show-ModeMenu ([string]$c.edition) ([string]$c.payload)
       $results += @{ Result = $r; Started = @($script:Started); Output = ($script:Output -join "`n"); Prompts = @($script:Prompts); KeyPrompts = @($script:KeyPrompts) }
     }
@@ -207,7 +209,7 @@ foreach ($c in @($cases)) {
       $got = $null; $err = $null
       try { $got = Get-Payload ([string]$c.edition) } catch { $err = $_.Exception.Message }
       $results += @{ Payload = $got; Saved = @($script:Saved); Output = ($script:Output -join "`n"); Error = $err
-                     Expanded = @($script:Expanded); Removed = @($script:Removed) }
+                     Expanded = @($script:Expanded); Removed = @($script:Removed); Notes = @(@($script:PayloadNotes) | ForEach-Object { $_.Text }) }
     }
     'elevate' {
       Invoke-Elevated ([string]$c.payload) ([string]$c.mode) ([string]$c.edition)

@@ -336,6 +336,8 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
       /* 26 */ flow('main', { ...staged('1p7 v1.8.0-1p7', '1p7'), saved: { Tag: 'v1.5.0' }, savedOk: false }),
       /* 27 */ flow('1p7', { lookupOk: false, saved: { Tag: 'v1.6.0-1p7' }, savedOk: true }),
       /* 28 */ flow('1p7', { saved: { Tag: 'v1.6.0-1p7' }, savedOk: true }),
+      /* 29 */ { fn: 'mode-menu', edition: '1p7', payload: 'C:\\op4-test-payload', answers: ['5', '3', '', '9'],
+                 notes: [{ Text: 'Cached download is current (v1.8.0-1p7) - not re-downloading.', Color: 'DarkGray' }] },
     ]);
   });
 
@@ -428,5 +430,26 @@ describe('install.ps1: the screens and the flow of the one installer', { skip: S
     assert.deepEqual([R[27].Saved, R[27].Expanded], [[], ['1p7 v1.6.0-1p7']]);
     assert.match(R[27].Output, /Couldn't read GitHub's releases - using the saved download of 1Password 7 edition \(v1\.6\.0-1p7\)\./);
     assert.deepEqual([R[28].Saved, R[28].Expanded], [['1p7 v1.8.0-1p7'], []]);  // a newer release than the saved one
+  });
+  it("the lines of the download step are kept for the edition's menu (the source line, the offline lines, the reload hint)", () => {
+    assert.deepEqual(R[14].Notes, ['Cached download is current (v1.8.0-1p7) - not re-downloading.']);
+    assert.deepEqual(R[15].Notes, []);                                          // a newer release of the same edition: nothing to say
+    assert.equal(R[16].Notes.length, 1);
+    assert.match(R[16].Notes[0], /^Edition changed: 1Password 7 Plain edition -> 1Password 7 edition\. In each browser/);
+    assert.deepEqual(R[17].Notes, ["Couldn't read GitHub's releases - using the cached download (v1.6.0-1p7)."]);
+    assert.deepEqual(R[18].Notes, ["Couldn't read GitHub's releases - using v1.8.0-1p7."]);
+    assert.equal(R[25].Notes.length, 2);
+    assert.equal(R[25].Notes[0], 'Using the saved download of Reborn v1.5.0 (checksum ok) - not re-downloading.');
+    assert.match(R[25].Notes[1], /^Edition changed: 1Password 7 edition -> Reborn\./);
+    assert.equal(R[26].Notes[0], 'The saved download of v1.5.0 does not match its checksum - downloading it again.');
+    assert.deepEqual(R[27].Notes, ["Couldn't read GitHub's releases - using the saved download of 1Password 7 edition (v1.6.0-1p7)."]);
+  });
+  it("the edition's menu shows them under its title until an action has run", () => {
+    const out = R[29].Output;
+    const note = 'Cached download is current (v1.8.0-1p7)';                     // the note's first line (it wraps at 58)
+    assert.equal(out.split(note).length - 1, 2);                                 // the first drawing and the redraw after an unknown key
+    assert.ok(out.indexOf(note) < out.indexOf('Load unpacked'), 'above the rows');
+    assert.ok(out.lastIndexOf(note) < out.indexOf('Requesting administrator rights'), 'not after the action');
+    assert.equal(R[29].Result, 'back');
   });
 });
