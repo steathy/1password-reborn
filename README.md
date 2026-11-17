@@ -2,7 +2,7 @@
 
 The classic 1Password extension, reborn for today's browsers — now with passkeys.
 
-> **Plain edition (1.7.0-plain).** This branch, `1pass7-plain`, is for **1Password 7 for Windows
+> **Plain edition (1.8.0-plain).** This branch, `1pass7-plain`, is for **1Password 7 for Windows
 > only** (up to 7.9.834, the last release that serves the classic extension) and for people who
 > know how Reborn's passkeys work. It asks as little as possible: a save takes one click, a
 > sign-in takes only your pick in 1Password, and the checks and hints of the other versions are

@@ -5,7 +5,11 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). (The version here is the *port's*
 release version; the bundled extension's manifest carries its own `4.7.5.x` version.)
 
-## [Unreleased]
+## [1.8.0-plain] - unreleased
+
+Plain edition, branch `1pass7-plain` (1Password 7 for Windows only). The extension of 1.7.0-plain,
+released again under the version number that the three editions now share (Reborn 1.8.0, the
+1Password 7 edition 1.8.0-1p7); nothing changes in its use. Bundled version **4.7.5.97**.
 
 ### Changed
 - `install.ps1` starts the one installer for the three editions, which lives on the main branch,
