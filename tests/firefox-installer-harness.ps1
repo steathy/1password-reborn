@@ -16,6 +16,7 @@
     { "fn": "tags", "releases": [...] | "unreadable": true }  -> Select-ReleaseTags per edition
     { "fn": "edition-of", "versionName": "..." }             -> Get-EditionOfVersionName
     { "fn": "payload-ok", "root": "...", "edition": "1p7" }  -> Test-Payload
+    { "fn": "local-edition", "root": "..." }                 -> Get-LocalEdition
     { "fn": "source", ... }                                  -> Resolve-PayloadSource
     { "fn": "mode-edition", "edition": "", "staged": {...} }  -> Resolve-ModeEdition
     { "fn": "fit", "edition": "1p7", "hasOP4": bool, "op7": "7.9.834"|null }  -> Resolve-EditionFit
@@ -138,6 +139,7 @@ foreach ($c in @($cases)) {
     }
     'edition-of' { $results += @{ Edition = (Get-EditionOfVersionName ([string]$c.versionName)) } }
     'payload-ok' { $results += @{ Ok = [bool](Test-Payload ([string]$c.root) ([string]$c.edition)) } }
+    'local-edition' { $results += @{ Edition = (Get-LocalEdition ([string]$c.root)) } }
     'source' {
       $results += @{ Source = (Resolve-PayloadSource -EditionKey ([string]$c.edition) -RootOk ([bool]$c.rootOk) -LocalEdition ([string]$c.local) `
         -Staged (ConvertTo-Staged $c.staged) -Tag ([string]$c.tag) -LookupOk ([bool]$c.lookupOk) -CacheOk ([bool]$c.cacheOk)) }

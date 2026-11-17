@@ -70,7 +70,7 @@ $ForceInstallId = 'mmfoigkanhpccidpokhjnomdcmgmjomj'   # Reborn's signed crx (bu
 $Editions = [ordered]@{
   'main'  = @{ Key = 'main';  Name = 'Reborn';              Branch = 'main';         Pattern = '^v\d+\.\d+\.\d+$';       Fallback = 'v1.5.0';
                About = '1Password 4 and 7; one item per passkey'; Force = $true
-               Files = @('src\manifest.json', 'dist\1password-reborn.crx', 'dist\extension.json') }
+               Files = @('src\manifest.json', 'dist\1password-reborn.crx', 'dist\extension.json', $FirefoxXpiSigned, $FirefoxXpiUnsigned) }
   '1p7'   = @{ Key = '1p7';   Name = '1Password 7 edition'; Branch = '1pass7';       Pattern = '^v\d+\.\d+\.\d+-1p7$';   Fallback = 'v1.8.0-1p7';
                About = 'password and passkey in one login'; Force = $false; Xpi = 'dist\firefox\1password-reborn-firefox-1p7.xpi'
                Files = @('src\manifest.json', 'dist\firefox\1password-reborn-firefox-1p7.xpi') }
@@ -394,12 +394,15 @@ function Get-EditionOfVersionName([string]$VersionName) {
   return $null
 }
 function Get-LocalEdition($root) {
-  # Which edition the files under $root are (a clone, an unzipped release, a download), or $null.
+  # Which edition the files under $root are (a clone, an unzipped release, a download): the one its
+  # src\manifest.json names, when $root also holds every file of that edition; else $null.
   if (-not $root) { return $null }
   $m = Join-Path $root 'src\manifest.json'
   if (-not (Test-Path $m)) { return $null }
   try { $vn = [string](Get-Content $m -Raw | ConvertFrom-Json).version_name } catch { return $null }
-  return (Get-EditionOfVersionName $vn)
+  $ed = Get-EditionOfVersionName $vn
+  if (-not $ed -or -not (Test-Payload $root $ed)) { return $null }
+  return $ed
 }
 function Select-ReleaseTags($Releases) {
   # Per edition the newest release that is neither a draft nor a prerelease and whose tag matches

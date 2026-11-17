@@ -9,12 +9,17 @@ const { runCases, SKIP } = require('./helpers/installer-harness.js');
 const rel = (tag_name, extra = {}) => ({ tag_name, draft: false, prerelease: false, ...extra });
 const ROOT = 'C:\\op4-test-root';
 const FILES = {
-  main: ['src\\manifest.json', 'dist\\1password-reborn.crx', 'dist\\extension.json'],
+  main: ['src\\manifest.json', 'dist\\1password-reborn.crx', 'dist\\extension.json',
+    'dist\\firefox\\1password-reborn-firefox.xpi', 'dist\\firefox\\1password-reborn-firefox-1p7.xpi'],
   '1p7': ['src\\manifest.json', 'dist\\firefox\\1password-reborn-firefox-1p7.xpi'],
   plain: ['src\\manifest.json', 'dist\\firefox\\1password-reborn-firefox-plain.xpi'],
 };
 const under = (root, files) => files.map((f) => root + '\\' + f);
 const source = (edition, extra = {}) => ({ fn: 'source', edition, rootOk: false, local: '', staged: null, tag: '', lookupOk: true, cacheOk: false, ...extra });
+const LOCAL = 'C:\\op4-test-local';
+const MAIN_VN = '4.7.5.93 (Reborn 1.5.0)';
+const local = (vn, files) => ({ fn: 'local-edition', root: LOCAL, paths: under(LOCAL, files),
+  files: vn ? { [LOCAL + '\\src\\manifest.json']: JSON.stringify({ version_name: vn }) } : {} });
 
 describe('install.ps1: the release of each edition and where its files come from', { skip: SKIP }, () => {
   let R;
@@ -48,6 +53,13 @@ describe('install.ps1: the release of each edition and where its files come from
       /* 24 */ { fn: 'mode-edition', edition: '1p7', staged: { Edition: 'plain', Tag: 'v1.7.0-plain' } },
       /* 25 */ { fn: 'mode-edition', edition: '', staged: { Edition: 'plain', Tag: 'v1.7.0-plain' } },
       /* 26 */ { fn: 'mode-edition', edition: '', staged: null },
+      /* 27 */ { fn: 'payload-ok', root: ROOT, edition: 'main', paths: under(ROOT, FILES.main.slice(0, 3)) },
+      /* 28 */ local(MAIN_VN, ['src\\manifest.json']),
+      /* 29 */ local(MAIN_VN, FILES.main),
+      /* 30 */ local(MAIN_VN, FILES.main.slice(0, 3)),
+      /* 31 */ local('4.7.5.96 (Reborn 1.8.0-1p7)', FILES['1p7']),
+      /* 32 */ local(MAIN_VN, FILES['1p7']),
+      /* 33 */ local('', []),
     ]);
   });
 
@@ -83,6 +95,17 @@ describe('install.ps1: the release of each edition and where its files come from
   });
   it('a -Mode run acts on -Edition, else on the staged edition, else on Reborn', () => {
     assert.deepEqual([R[24], R[25], R[26]].map((r) => r.Edition), ['1p7', 'plain', 'main']);
+  });
+  it("Reborn's files include its two Firefox builds; a folder counts as an edition only when its manifest names it and it holds every file of it", () => {
+    assert.equal(R[27].Ok, false);                                                 // Reborn without its Firefox builds
+    assert.deepEqual(R.slice(28, 34).map((r) => r.Edition), [
+      null,     // a lone src\manifest.json (VM check I5)
+      'main',   // Reborn's files
+      null,     // Reborn without its Firefox builds
+      '1p7',    // the 1Password 7 edition's files
+      null,     // the manifest names Reborn, the files are another edition's
+      null,     // no manifest
+    ]);
   });
 });
 
