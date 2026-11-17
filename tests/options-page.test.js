@@ -239,6 +239,25 @@ test('the sample is the real card of the first save step: the asked style, a clo
   assert.ok(s.css.includes('linear-gradient(#565c62,#292c30)'));
 });
 
+// From the review of this port (its m2): the test above compares the time, which is shown in whole
+// seconds rounded up and so cannot change within one second; the bar's width shows a running clock
+// at once.
+test("the sample card's clock stands still: the time and the bar", async () => {
+  const dom = new JSDOM(read('passkeys/options-sample.html'), { url: 'chrome-extension://abc/passkeys/options-sample.html?style=op7', runScripts: 'outside-only' });
+  const w = dom.window;
+  windows.push(w);
+  w.eval(read('passkeys/card.js'));
+  let card = null;
+  const make = w.OP4Card.createCard;
+  w.OP4Card.createCard = (...a) => (card = make(...a));
+  w.eval(read('passkeys/options-sample.js'));
+  const r = card._root;
+  const now = () => [r.querySelector('.cd').textContent, r.querySelector('.bar').style.width];
+  const first = now();
+  await new Promise((res) => setTimeout(res, 600));
+  assert.deepEqual(now(), first);
+});
+
 test('opened as a small window it closes when it loses the focus or on Escape; as the popup it leaves that to the browser', async () => {
   const run = (query) => {
     const p = page({}, { query });

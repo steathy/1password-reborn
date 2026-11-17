@@ -386,6 +386,19 @@ test('settings: an unreadable key is logged and counts as Reborn; nothing is hel
   }
 });
 
+// From the review of this port (its m1): requests wait for the card style's first read, so the
+// first card after a worker start has the stored style (plan decision 10). The local area answers
+// late and in call order, like chrome.storage.
+test('settings: a request right at a worker start waits for the style read: its first card has the stored style', async () => {
+  const env = boot({ 'op4pk.style': 'op7' }, { asyncLocal: true });
+  const c = connect(env);
+  c.emit({ type: 'request', id: 'c1', kind: 'create', options: CREATE });     // before the reads have answered
+  await new Promise((r) => setTimeout(r, 60));
+  await ticks(10);
+  assert.deepEqual(c.posted.filter((m) => m.type === 'card').map((m) => [m.card.state, m.style]), [['create-prompt', 'op7']]);
+  noErrors(env);
+});
+
 test('the options page and the worker on one store that answers late: the style chosen on the page applies to the next card; the worker writes nothing', async () => {
   const env = boot({ 'op4pk.style': 'reborn' }, { asyncLocal: true });
   await new Promise((r) => setTimeout(r, 60));                                 // the worker's first read has answered
